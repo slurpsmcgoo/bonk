@@ -8,6 +8,7 @@ from enum import Enum
 import csv
 import matplotlib.pyplot as plt
 import math
+import numpy as np
 
 Body = Enum('Body',['Earth','Mars','Moon'])
 
@@ -276,3 +277,33 @@ def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
 def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity):
     eta = (45.6-1.1622*slope*100)/100
     return Ecor*mass*velocity+0.5*airDensity*Cd*frontalArea*(velocity+wind)**2*velocity+slope*mass*gravity*velocity*eta
+
+def powerDuration(distance, time,airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity):
+    # given a base distance duration (race result) and a fatigue resistance, calculate velocity vs distance
+    # at each velocity, calculate power (from flat ground including air resistance - assuming typical race conditions)
+    # calculate duration from distance/velocity
+    # plot power vs duration
+    rF = 0.07
+    v0 = distance/time
+    d0 = distance
+    d = np.arange(1600,300000,10000)
+    v = v0*(d/d0)**-rF
+    print(v)
+    duration = np.divide(d,v)
+    p = []
+    for i in range(len(v)):
+        power = getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, v[i])
+        p.append(power)
+    p = np.asarray(p)
+    print(p)
+    plt.figure()
+    print(duration.size)
+    print(p.size)
+    plt.plot(duration,p)
+    return duration, p
+    
+class powerDurationFromEnergy:
+    startingGlycogen = 750 #g
+    
+    
+    
