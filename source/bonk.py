@@ -14,12 +14,13 @@ Body = Enum('Body',['Earth','Mars','Moon'])
 
 class Athlete:
     # Athlete contains the properties of a runner
-    def __init__(self, mass = 70, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5):
+    def __init__(self, mass = 70, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5, vo2maxPower=347):
         self.mass = mass
         self.fatigueResistanceCoef = fatigueResistanceCoef
         self.Cd = Cd
         self.frontalArea = frontalArea
         self.Ecor = Ecor
+        self.vo2maxPower = vo2maxPower
         
     
     def getRunningPowerDuration(self):
@@ -37,7 +38,7 @@ class Athlete:
 	
 class Environment:
     # Environment is contains global properties like temp and humidity, for now we assume constant
-    def __init__(self,temperature = 10, humidity = 20, wind = 2, gravity = 9.81, altitude = 0, body = Body.Earth):
+    def __init__(self,temperature = 10, humidity = 20, wind = 0, gravity = 9.81, altitude = 0, body = 1):
         self.temperature = temperature
         self.tempK = temperature+273
         self.humidity = humidity
@@ -45,12 +46,23 @@ class Environment:
         self.gravity = gravity
         self.altitude = altitude
         self.body = body
-        if self.body == Body.Earth:
+        if self.body == 1:
             self.density = 1.205 #kg/m3
             self.p0 = 101300 #Pa
             self.R = 8.314 # kJ/kmol/k
             self.M = 28.97 #g/mol
             self.airDensity = self.getAirDensity(altitude)
+            self.gravity = 9.81
+        elif self.body == 2:
+            self.airDensity = 0.000001
+            self.density = self.airDensity
+            self.gravity = 1.62
+        elif self.body == 3:
+            self.airDensity = 0.02
+            self.gravity = 3.721
+            self.density = self.airDensity
+        else:
+            print('error: no known body')
     def getAirDensity(self,altitude):
         self.airPressure = self.p0*math.exp(-self.M*self.gravity*altitude/self.R/self.tempK)
         return (self.airPressure*self.M)/(self.R*self.tempK)/1000
@@ -89,6 +101,12 @@ class Course:
     # Course is basically a collection of segments
     def __init__(self,segments):
         self.segments = segments
+        x = 0
+        y = 0
+        for segment in self.segments:
+            segment.setStart(x,y)
+            x += segment.length
+            y += segment.elevGain
 
     def plotProfile(self):
         fig, ax = plt.subplots(figsize=(5, 3))
@@ -100,7 +118,7 @@ class Course:
             x += segment.length
             y += segment.elevGain
         ax.set_title('Course Elevation')
-        ax.legend(loc='upper left')
+        #ax.legend(loc='upper left')
         ax.set_xlabel('Distance (m)')
         ax.set_ylabel('Elevation (m)')
         fig.tight_layout()
@@ -156,6 +174,25 @@ class Performance:
         self.ax.set_xlabel('Distance (m)')
         self.ax.set_ylabel('Power (w)')
         self.fig.tight_layout()
+        
+    def plotVDistance(self):
+        self.fig3, self.ax3 = plt.subplots(figsize=(5, 3))
+        segmentsX = []
+        segmentsV = []
+
+        for segmentPerformance in self.segmentPerformances:
+            segmentsX.append(segmentPerformance.segment.x0)
+            segmentsX.append(segmentPerformance.segment.x1)
+            segmentsV.append(segmentPerformance.v)
+            segmentsV.append(segmentPerformance.v)
+        
+        self.ax3.plot(segmentsX,segmentsV)
+        self.ax3.set_title('Power per segment')
+        #self.ax3.legend(loc='upper left')
+        self.ax3.set_xlabel('Distance (m)')
+        self.ax3.set_ylabel('V (m/s)')
+        self.fig3.tight_layout()
+
 
     def plotPowerDuration(self):
         self.fig1, self.ax1 = plt.subplots(figsize=(5, 3))
@@ -208,7 +245,7 @@ class SegmentPerformance:
         return self.duration
         
     def getSlopePower(self,environment, athlete, segment, velocity):
-        eta = (45.6-1.1622*segment.slope*100)/100
+        eta = (45.6+1.1622*segment.slope*100)/100
         slopePower = athlete.mass*velocity*environment.gravity*(segment.slope)*eta
         return slopePower	
     	
@@ -217,7 +254,7 @@ class SegmentPerformance:
         return dragPower
     
     def getFlatPower(self,environment, athlete, velocity, EcorMod):
-        flatPower = athlete.mass*athlete.Ecor*(1+EcorMod)*velocity
+        flatPower = athlete.mass*athlete.Ecor*environment.gravity/9.81*(1+EcorMod)*velocity
         return flatPower
     
     def getDuration(self,length,velocity):
@@ -228,7 +265,7 @@ class SegmentPerformance:
 
 
 def getSlopePower(environment, athlete, segment, velocity):
-    eta = (45.6-1.1622*segment.slope*100)/100
+    eta = (45.6+1.1622*segment.slope*100)/100
     slopePower = athlete.mass*velocity*environment.gravity*(segment.slope)*eta
     return slopePower	
 	
@@ -237,7 +274,7 @@ def getDragPower(environment, athlete, velocity):
     return dragPower
 
 def getFlatPower(environment, athlete, velocity, EcorMod):
-    flatPower = athlete.mass*athlete.Ecor*velocity
+    flatPower = athlete.mass*athlete.Ecor*environment.gravity/9.81*velocity
     return flatPower
 
 def readCourse(pathToCourseFile):
@@ -254,16 +291,17 @@ def readCourse(pathToCourseFile):
             slope = float(seg['slope'])
             EcorMod = float(seg['EcorMod'])
             surfaceTechMod = float(seg['surfaceTechMod'])
-            print(number, length, slope, EcorMod, surfaceTechMod)
+            #print(number, length, slope, EcorMod, surfaceTechMod)
             segment = Segment(number, length, slope, EcorMod, surfaceTechMod)
             segments.append(segment)
         course = Course(segments)
         return course
 
 def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
+    Ecor = Ecor*gravity/9.81
     # slope is a decimal value
     # given a power, solve for velocity
-    eta = (45.6-1.1622*slope*100)/100
+    eta = (45.6+1.1622*slope*100)/100
     # a = 0.5*airDensity*Cd*frontalArea
     # b = 2*0.5*airDensity*Cd*frontalArea*wind
     # c = 0.5*airDensity*Cd*frontalArea*wind**2+Ecor*mass*math.cos(math.atan(slope))+eta*mass*gravity*math.sin(math.atan(slope))
@@ -285,7 +323,8 @@ def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
     return v
 
 def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity):
-    eta = (45.6-1.1622*slope*100)/100
+    Ecor = Ecor*gravity/9.81
+    eta = (45.6+1.1622*slope*100)/100
     return Ecor*mass*velocity+0.5*airDensity*Cd*frontalArea*(velocity+wind)**2*velocity+slope*mass*gravity*velocity*eta
 
 # def powerDuration(distance, time,airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity):
@@ -368,12 +407,12 @@ class PowerDuration:
 # if error(race time - duration) > errorLim , increase power by 0.1* errorFrac*power
 # if error(race time - duration) < -errorLim, decrease power by 0.1*errorFrac*power
 
-def getRaceTime(environment,athlete,course,powerDuration,errorLim = 0.01,powerGuess = 300):
+def getRaceTime(environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = 300):
     segmentPerformances = []
     timeMissing = 1
     duration = 0
     while(timeMissing):
-        if powerGuess > 350 or powerGuess < 100:
+        if powerGuess > athlete.vo2maxPower or powerGuess < 100:
             print('failed')
             return duration, powerGuess
         duration = 0
@@ -383,16 +422,21 @@ def getRaceTime(environment,athlete,course,powerDuration,errorLim = 0.01,powerGu
             segmentPerformance.setStart(duration)
             segmentPerformances.append(segmentPerformance)
             duration += segmentPerformance.duration
-        print('powerGuess ',powerGuess)
-        print('duration ', duration)
+        #print('powerGuess ',powerGuess)
+        #print('duration ', duration)
         limDuration = powerDuration.getDuration(powerGuess)
-        print('limduration ',limDuration)
+        #print('limduration ',limDuration)
         error = duration-limDuration
         errorFrac = error/duration
-        print('errorFrac ',errorFrac)
+        #print('errorFrac ',errorFrac)
         if (errorFrac)>errorLim:
-            powerGuess = powerGuess*(1-0.1*errorFrac)
+            powerGuess = powerGuess*(1-0.01*errorFrac)
         elif (errorFrac)<-errorLim:
-            powerGuess = powerGuess*(1-0.1*errorFrac)
+            powerGuess = powerGuess*(1-0.01*errorFrac)
         else:
             return duration, powerGuess
+        
+def getTime(seconds):
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    return h, m, s

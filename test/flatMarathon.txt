@@ -1,0 +1,2 @@
+number length slope EcorMod surfaceTechMod
+0 42195 0 0 0
