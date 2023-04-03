@@ -4,7 +4,7 @@ Created on Sat Apr  1 11:16:52 2023
 
 @author: jackm_000
 """
-path = 'runWoodstock.txt'
+path = 'ouray.csv'
 
 #run woodstock 761 pixels per 16 miles
 # 187 pixels per 80 ft
@@ -27,11 +27,12 @@ def processSVG(pathToCourseFile):
             newlines.append(line)
             
     #yFtPerPixel = 2.81 #boston
-    yFtPerPixel = 80/187.0 #woodstock
-    yMperPixel = yFtPerPixel/3.2808
+    #yFtPerPixel = 80/187.0 #woodstock
+    #yMperPixel = yFtPerPixel/3.2808
+    yMperPixel = 9.807
     #xMilePerPixel = 1/105.3#boston
-    xMilePerPixel = 16/761#woodstock
-    xMperPixel = xMilePerPixel*1609
+    #xMilePerPixel = 16/761#woodstock
+    xMperPixel = 123.68#xMilePerPixel*1609
     x = []
     y = []
     xOffset = float(newlines[0][0])
@@ -45,14 +46,14 @@ def processSVG(pathToCourseFile):
             print(posX, ' ',posY)
             x.append(posX)
             y.append(posY)
-    file1 = open('woodstock.csv', 'w')
+    file1 = open('ourayTemp.csv', 'w')
     for line in newlines:
         file1.write("%s\n" % line)
     file1.close()
     
-    file = open('woodstockCourse.csv','w')
+    file = open('ourayCourse.csv','w')
     file.write('number length slope EcorMod surfaceTechMod\n')
-    for j in range(6):
+    for j in range(1):
         print(j)
         for i in range(len(x)-1):
             if x[i+1]-x[i] > 0:

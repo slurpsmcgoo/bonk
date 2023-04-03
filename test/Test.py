@@ -15,7 +15,7 @@ from enum import Enum
 
 Body = Enum('Body',['Earth','Mars','Moon'])
 
-environment = bonk.Environment(body=1)
+environment = bonk.Environment(altitude = 3000, body=1)
 #environment = bonk.Environment(body=Body.Earth)
 #environment = bonk.Environment(body=Body.Mars)
 athlete = bonk.Athlete()
@@ -27,11 +27,11 @@ segment = bonk.Segment()
 # print('flat power',bonk.getFlatPower(environment, athlete, velocity, 0))
 # print('slope power',bonk.getSlopePower(environment, athlete, segment, velocity))
 
-bostonCourse = bonk.readCourse('bostonCourse.csv')
-flatCourse = bonk.readCourse('flatMarathon.csv')
-slopeSweep = bonk.readCourse('slopeSweep.csv')
-updownCourse = bonk.readCourse('marathonUpDown.csv')
-woodstockCourse = bonk.readCourse('woodstockCourse.csv')
+bostonCourse = bonk.readCourse('bostonCourse.csv','boston')
+flatCourse = bonk.readCourse('flatMarathon.csv','flat')
+slopeSweep = bonk.readCourse('slopeSweep.csv','slope')
+updownCourse = bonk.readCourse('marathonUpDown.csv','updown')
+woodstockCourse = bonk.readCourse('woodstockCourse.csv','woodstock')
 
 bostonCourse.plotProfile()
 woodstockCourse.plotProfile()
