@@ -13,16 +13,18 @@ import numpy as np
 Body = Enum('Body',['Earth','Mars','Moon'])
 plotSize = (12, 8)
 
+#ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
+
 class Athlete:
     # Athlete contains the properties of a runner
-    def __init__(self, mass = 70, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5, vo2maxPower=347, glucoseConsumption = 60, startingGlycogen = 3000):
+    def __init__(self, mass = 70, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5, vo2maxPower=347, glucoseConsumption = 60, startingGlycogen = 1500,temp=5,altitude=0):
         self.mass = mass
         self.fatigueResistanceCoef = fatigueResistanceCoef
         self.Cd = Cd
         self.frontalArea = frontalArea
         self.Ecor = Ecor
         self.vo2maxPower = vo2maxPower
-        self.powerDuration = PowerDuration(glucoseConsumption = glucoseConsumption, startingGlycogen = startingGlycogen, vo2maxPower=vo2maxPower)
+        self.powerDuration = PowerDuration(glucoseConsumption = glucoseConsumption, startingGlycogen = startingGlycogen, vo2maxPower=vo2maxPower,temp=temp, altitude=altitude)
         
         
     
@@ -41,12 +43,11 @@ class Athlete:
 	
 class Environment:
     # Environment is contains global properties like temp and humidity, for now we assume constant
-    def __init__(self,temperature = 10, humidity = 20, wind = 0, gravity = 9.81, altitude = 0, body = 1):
+    def __init__(self,temperature = 5, humidity = 0, wind = 0, altitude = 0, body = 1):
         self.temperature = temperature
         self.tempK = temperature+273
         self.humidity = humidity
         self.wind = wind
-        self.gravity = gravity
         self.altitude = altitude
         self.body = body
         if self.body == 1:
@@ -54,8 +55,8 @@ class Environment:
             self.p0 = 101300 #Pa
             self.R = 8.314 # kJ/kmol/k
             self.M = 28.97 #g/mol
-            self.airDensity = self.getAirDensity(altitude)
             self.gravity = 9.81
+            self.airDensity = self.getAirDensity(altitude)
         elif self.body == 2:
             self.airDensity = 0.000001
             self.density = self.airDensity
@@ -67,7 +68,8 @@ class Environment:
         else:
             print('error: no known body')
     def getAirDensity(self,altitude):
-        self.airPressure = self.p0*math.exp(-self.M*self.gravity*altitude/self.R/self.tempK)
+        self.airPressure = self.p0*math.exp(-self.M/1000*self.gravity*altitude/self.R/self.tempK)
+        #print(self.airPressure)
         return (self.airPressure*self.M)/(self.R*self.tempK)/1000
             
             
@@ -125,6 +127,7 @@ class Course:
         #ax.legend(loc='upper left')
         ax.set_xlabel('Distance (km)')
         ax.set_ylabel('Elevation (m)')
+        ax.grid(color='lightgrey', linestyle='-', linewidth=1)
         #fig.tight_layout()
 	
 
@@ -140,16 +143,36 @@ class Performance:
         self.duration = 0
         self.power = 0
         self.powerGuess = 0
+        self.distance = 0
 
+    def getMileSplits(self):
+        previousTime = 0
+        self.getDuration(self.powerGuess)
+        for i in range(int(self.distance/1609)): # loop through miles
+            time = np.interp((i+1)*1609,self.distances,self.durations)
+            mileSplit = (time-previousTime)
+            previousTime = time
+            m, s = divmod(mileSplit, 60)
+            mile = i+1
+            m = int(m)
+            s = int(s)
+            out = 'Mile: {:02d} - {:02d}:{:02d}'
+            print(out.format(mile,m,s))
+        
             
     def getDuration(self,power):
         self.duration = 0
+        self.durations = []
+        self.distances = []
         for segment in self.course.segments:
             segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment,power)
             #segmentPerformance.getTimeFromPower(self.athlete,self.environment,power)
             segmentPerformance.setStart(self.duration)
             self.segmentPerformances.append(segmentPerformance)
             self.duration += segmentPerformance.duration
+            self.distance += segmentPerformance.segment.length
+            self.durations.append(self.duration)
+            self.distances.append(self.distance)
         return self.duration
             
     def plotPowerDistance(self):
@@ -180,6 +203,7 @@ class Performance:
         self.ax.legend(loc='upper left')
         self.ax.set_xlabel('Distance (m)')
         self.ax.set_ylabel('Power (w)')
+        self.ax.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig.tight_layout()
         
     def plotVDistance(self):
@@ -198,6 +222,7 @@ class Performance:
         #self.ax3.legend(loc='upper left')
         self.ax3.set_xlabel('Distance (m)')
         self.ax3.set_ylabel('V (m/s)')
+        self.ax3.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig3.tight_layout()
 
 
@@ -229,6 +254,7 @@ class Performance:
         self.ax1.legend(loc='upper left')
         self.ax1.set_xlabel('Duration (s)')
         self.ax1.set_ylabel('Power (w)')
+        self.ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig1.tight_layout()
         
     def getRaceTime(self):
@@ -299,7 +325,7 @@ class SegmentPerformance:
         return slopePower	
     	
     def getDragPower(self,environment, athlete, velocity):
-        dragPower = 0.5*environment.density*athlete.Cd*athlete.frontalArea*(velocity+environment.wind)**2*velocity
+        dragPower = 0.5*environment.airDensity*athlete.Cd*athlete.frontalArea*(velocity+environment.wind)**2*velocity
         return dragPower
     
     def getFlatPower(self,environment, athlete, velocity, EcorMod):
@@ -318,9 +344,39 @@ def getSlopePower(environment, athlete, segment, velocity):
     slopePower = athlete.mass*velocity*environment.gravity*(segment.slope)*eta
     return slopePower	
 	
+def plotSlopePower(environment, athlete, velocity):
+    slopes = np.arange(-30,35,5)/100
+    slopePowers = []
+    for slope in slopes:
+        eta = (45.6+1.1622*slope*100)/100
+        slopePower = athlete.mass*velocity*environment.gravity*(slope)*eta
+        slopePowers.append(slopePower)
+    fig1, ax1 = plt.subplots(figsize=plotSize)
+    ax1.plot(slopes,slopePowers,color='orange')
+    ax1.set_title('Slope Power vs. Slope')
+    ax1.set_xlabel('Slope (%)')
+    ax1.set_ylabel('Power (w)')
+    ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
+    fig1.tight_layout()
+
 def getDragPower(environment, athlete, velocity):
-    dragPower = 0.5*environment.density*athlete.Cd*athlete.frontalArea*(velocity+environment.wind)**2*velocity
+    dragPower = 0.5*environment.airDensity*athlete.Cd*athlete.frontalArea*(velocity+environment.wind)**2*velocity
     return dragPower
+
+def plotDragPower(environment, athlete, velocity):
+    #velocity = 4.05
+    dragPowers = []
+    winds = np.arange(-10,11,1)
+    for wind in winds:
+        dragPower = 0.5*environment.density*athlete.Cd*athlete.frontalArea*(velocity+wind)**2*velocity*np.sign(velocity+wind)
+        dragPowers.append(dragPower)
+    fig1, ax1 = plt.subplots(figsize=plotSize)
+    ax1.plot(winds/velocity*100,dragPowers,color='orange')
+    ax1.set_title('Drag Power vs. Headwind Speed at 4.05 m/s')
+    ax1.set_xlabel('Headwind Speed (% running speed)')
+    ax1.set_ylabel('Power (w)')
+    ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
+    fig1.tight_layout()
 
 def getFlatPower(environment, athlete, velocity, EcorMod):
     flatPower = athlete.mass*athlete.Ecor*environment.gravity/9.81*(1+EcorMod)*velocity
@@ -401,14 +457,19 @@ def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity
 #     return duration, p
     
 class PowerDuration:
-    def __init__(self, glucoseConsumption = 60, startingGlycogen = 3000, vo2maxPower = 347):
+    def __init__(self, glucoseConsumption = 60, startingGlycogen = 3000, vo2maxPower = 347,temp = 5, altitude=0):
+        self.tempK = temp+273
+        self.tempFrac = abs(self.tempK/(273+5)-1)
         self.metabolicEfficiency = 0.25
         self.glucoseConsumption = glucoseConsumption+0.01
         self.startingGlycogen = startingGlycogen+0.01
         self.vo2maxPower = vo2maxPower
+        self.altitudeFactor = (100+-2.63*10**-3*float(altitude)+-9.04*10**-7*float(altitude)**2)/100
+        self.vo2maxPower = self.vo2maxPower*self.altitudeFactor
         self.fractionVo2 = np.arange(0,105,5)/100
         self.fractionFTP = self.fractionVo2/1.13
         self.power = self.fractionVo2*self.vo2maxPower
+        self.power = self.power/(1+self.tempFrac)# reduce by temperature with simple linear decrease around optimal 5c 
         self.percentFat = np.asarray([100,97.5,95,92.5,90,88.75,87.5,81.25,75,70.5,66,61.5,57,51.5,46,40.5,35,28.75,22.5,16.25,10])/100
         self.percentGlucose = 1-self.percentFat
         self.powerFat = np.multiply(self.percentFat,self.power)
@@ -438,7 +499,7 @@ class PowerDuration:
         return np.interp(power,self.power,self.duration)
     def getPower(self,duration):
         return np.interp(duration,self.duration,self.power)
-    def plotPowerDuration(self,maxDuration = 24):
+    def plotPowerDuration(self,maxDuration = 24,temp=5):
         self.fig1, self.ax1 = plt.subplots(figsize=plotSize)
         self.ax1.plot(self.duration/3600,self.power,color='orange')
         self.ax1.set_title('Power vs Duration')
@@ -446,6 +507,7 @@ class PowerDuration:
         self.ax1.set_ylabel('Power (w)')
         self.ax1.set_xlim(xmin=0,xmax=maxDuration)
         self.ax1.set_ylim(ymin=self.vo2maxPower*0.4,ymax=self.vo2maxPower*1.1)
+        self.ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig1.tight_layout()
     
     def plotDurationPower(self,maxDuration = 24):
@@ -456,7 +518,10 @@ class PowerDuration:
         self.ax2.set_xlabel('Power (w)')
         self.ax2.set_xlim(xmin=self.vo2maxPower*0.4,xmax=self.vo2maxPower*1.1)
         self.ax2.set_ylim(ymin=0,ymax=maxDuration)
+        self.ax2.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig2.tight_layout()
+        
+    
 
 # process to determine race time
 # choose a 
