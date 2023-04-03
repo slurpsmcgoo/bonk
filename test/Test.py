@@ -31,8 +31,10 @@ bostonCourse = bonk.readCourse('bostonCourse.csv')
 flatCourse = bonk.readCourse('flatMarathon.csv')
 slopeSweep = bonk.readCourse('slopeSweep.csv')
 updownCourse = bonk.readCourse('marathonUpDown.csv')
+woodstockCourse = bonk.readCourse('woodstockCourse.csv')
 
 bostonCourse.plotProfile()
+woodstockCourse.plotProfile()
 
 print('air density ', environment.airDensity)
 

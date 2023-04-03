@@ -4,7 +4,10 @@ Created on Sat Apr  1 11:16:52 2023
 
 @author: jackm_000
 """
-path = '../bostonCoursePath_v_2pt81FtPerPix_x_105pt3PixPerFt.csv'
+path = 'runWoodstock.txt'
+
+#run woodstock 761 pixels per 16 miles
+# 187 pixels per 80 ft
 
 def processSVG(pathToCourseFile):
     # read in segments line by line and create course object
@@ -23,9 +26,11 @@ def processSVG(pathToCourseFile):
             line = newline[0:2]
             newlines.append(line)
             
-    yFtPerPixel = 2.81
+    #yFtPerPixel = 2.81 #boston
+    yFtPerPixel = 80/187.0 #woodstock
     yMperPixel = yFtPerPixel/3.2808
-    xMilePerPixel = 1/105.3
+    #xMilePerPixel = 1/105.3#boston
+    xMilePerPixel = 16/761#woodstock
     xMperPixel = xMilePerPixel*1609
     x = []
     y = []
@@ -40,16 +45,19 @@ def processSVG(pathToCourseFile):
             print(posX, ' ',posY)
             x.append(posX)
             y.append(posY)
-    file1 = open('boston.csv', 'w')
+    file1 = open('woodstock.csv', 'w')
     for line in newlines:
         file1.write("%s\n" % line)
     file1.close()
     
-    file = open('bostonCourse.csv','w')
+    file = open('woodstockCourse.csv','w')
     file.write('number length slope EcorMod surfaceTechMod\n')
-    for i in range(len(x)-1):
-        line = str(i)+' '+str(x[i+1]-x[i])+' '+str(y[i+1]-y[i])+' '+'0 0\n'
-        file.write(line)
+    for j in range(6):
+        print(j)
+        for i in range(len(x)-1):
+            if x[i+1]-x[i] > 0:
+                line = str(i)+' '+str(x[i+1]-x[i])+' '+str(y[i+1]-y[i])+' '+'0 0\n'
+                file.write(line)
     file.close()
         
         
