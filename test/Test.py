@@ -28,6 +28,10 @@ segment = bonk.Segment()
 # print('slope power',bonk.getSlopePower(environment, athlete, segment, velocity))
 
 bostonCourse = bonk.readCourse('bostonCourse.csv','boston')
+
+
+
+
 flatCourse = bonk.readCourse('flatMarathon.csv','flat')
 slopeSweep = bonk.readCourse('slopeSweep.csv','slope')
 updownCourse = bonk.readCourse('marathonUpDown.csv','updown')

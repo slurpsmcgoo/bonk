@@ -9,6 +9,7 @@ import csv
 import matplotlib.pyplot as plt
 import math
 import numpy as np
+from scipy import interpolate
 
 Body = Enum('Body',['Earth','Mars','Moon'])
 plotSize = (12, 8)
@@ -144,35 +145,137 @@ class Performance:
         self.power = 0
         self.powerGuess = 0
         self.distance = 0
+        self.interpDone = 0
+        
+    def getNormalizedPower(self,order=4):
+        #samplingWindow = 30.0 #seconds
+        #powers = []
+        #if self.interpDone == 0:
+        #    self.f = interpolate.interp1d(self.durations,self.powers,kind='nearest-up',bounds_error=False,fill_value=self.powers[0])
+        #self.interpDone = 1
+        #print(self.durations)
+        #for i in range(int(self.duration/samplingWindow)): # loop through each 30 second section
+            #power = self.f(samplingWindow/2+i*samplingWindow)
+            
+            #print('interpolated power: ',power,' at time ',i*samplingWindow+samplingWindow/2)
+            #powerRaised = power**order
+            #powers.append(powerRaised)
+        #print('powers',self.powers)
+        powersRaised = np.power(self.powers,order)
+        #print('powersraised',powersRaised)
+        #normForDuration
+        timeFactor = np.divide(self.segDurations,self.duration)
+        #powersRaised = np.multiply(powersRaised,timeFactor)
+        #print('normed',powersRaised)
+        avgPowerRaised = np.average(powersRaised,weights=timeFactor)
+        #print('averageRaised',avgPowerRaised)
+        normalizedPower = avgPowerRaised**(1/order)
+        #print('normalized',normalizedPower)
+        return normalizedPower
+            
+            
 
-    def getMileSplits(self):
+    def getMileSplits(self,relative=0):
         previousTime = 0
-        self.getDuration(self.powerGuess)
+        self.getDuration(self.power)
+        avgSpeed = self.distance/self.duration
+        avgMileTime = 1609.0/avgSpeed
         for i in range(int(self.distance/1609)): # loop through miles
             time = np.interp((i+1)*1609,self.distances,self.durations)
             mileSplit = (time-previousTime)
-            previousTime = time
+            
             m, s = divmod(mileSplit, 60)
             mile = i+1
             m = int(m)
             s = int(s)
-            out = 'Mile: {:02d} - {:02d}:{:02d}'
-            print(out.format(mile,m,s))
+            if(relative==1):
+                out = 'Mile: {:02d} - {:.2f}'
+                print(out.format(mile,(time-previousTime)/avgMileTime))
+            else:
+                out = 'Mile: {:02d} - {:02d}:{:02d}'
+                print(out.format(mile,m,s))
+            previousTime = time
+            
+    def getMileSplitsV(self,relative=0):
+        previousTime = 0
+        self.getDurationV(self.v)
+        avgSpeed = self.distance/self.duration
+        avgMileTime = 1609.0/avgSpeed
+        for i in range(int(self.distance/1609)): # loop through miles
+            time = np.interp((i+1)*1609,self.distances,self.durations)
+            mileSplit = (time-previousTime)
+            
+            m, s = divmod(mileSplit, 60)
+            mile = i+1
+            m = int(m)
+            s = int(s)
+            if(relative==1):
+                out = 'Mile: {:02d} - {:.2f}'
+                print(out.format(mile,(time-previousTime)/avgMileTime))
+            else:
+                out = 'Mile: {:02d} - {:02d}:{:02d}'
+                print(out.format(mile,m,s))
+            previousTime = time
         
             
     def getDuration(self,power):
         self.duration = 0
         self.durations = []
         self.distances = []
+        self.speeds = []
+        self.segDistances = []
+        self.segDurations = []
+        self.segmentPerformances = []
+        self.powers = []
+        self.distance = 0
+        self.energy = 0
+        self.averagePower = 0
+        self.power = power
         for segment in self.course.segments:
-            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment,power)
-            #segmentPerformance.getTimeFromPower(self.athlete,self.environment,power)
+            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+            segmentPerformance.getTimeFromPower(self.athlete,self.environment,power)
             segmentPerformance.setStart(self.duration)
+            self.segDistances.append(segment.length)
             self.segmentPerformances.append(segmentPerformance)
             self.duration += segmentPerformance.duration
             self.distance += segmentPerformance.segment.length
             self.durations.append(self.duration)
             self.distances.append(self.distance)
+            self.speeds.append(segmentPerformance.distance/segmentPerformance.duration)
+            self.segDurations.append(segmentPerformance.duration)
+            self.powers.append(power)
+        self.energy = np.sum(np.multiply(power, self.segDurations))
+        self.averagePower = self.energy/self.duration
+        return self.duration
+    
+    def getDurationV(self,v):
+        self.duration = 0
+        self.durations = []
+        self.distances = []
+        self.powers = []
+        self.segDistances = []
+        self.segDurations = []
+        self.segmentPerformances = []
+        self.distance = 0
+        self.energy = 0
+        self.averagePower = 0
+        self.v = v
+        self.speeds = []
+        for segment in self.course.segments:
+            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+            segmentPerformance.getPowerFromV(self.athlete,self.environment,v)
+            segmentPerformance.setStart(self.duration)
+            self.segDistances.append(segment.length)
+            self.segmentPerformances.append(segmentPerformance)
+            self.duration += segmentPerformance.duration
+            self.distance += segmentPerformance.segment.length
+            self.durations.append(self.duration)
+            self.distances.append(self.distance)
+            self.powers.append(segmentPerformance.power)
+            self.segDurations.append(segmentPerformance.duration)
+            self.speeds.append(v)
+        self.energy = np.sum(np.multiply(self.powers, self.segDurations))
+        self.averagePower = self.energy/self.duration
         return self.duration
             
     def plotPowerDistance(self):
@@ -183,8 +286,8 @@ class Performance:
         segmentsFlatPower = []
         segmentsSlopePower = []
         for segmentPerformance in self.segmentPerformances:
-            segmentsX.append(segmentPerformance.segment.x0)
-            segmentsX.append(segmentPerformance.segment.x1)
+            segmentsX.append(segmentPerformance.segment.x0/1000)
+            segmentsX.append(segmentPerformance.segment.x1/1000)
             segmentsPower.append(segmentPerformance.power)
             segmentsPower.append(segmentPerformance.power)
             segmentsDragPower.append(segmentPerformance.dragPower)
@@ -194,14 +297,14 @@ class Performance:
             segmentsSlopePower.append(segmentPerformance.slopePower)
             segmentsSlopePower.append(segmentPerformance.slopePower)
             
-        self.ax.plot(segmentsX,segmentsPower,label='total power',color='red')
-        self.ax.plot(segmentsX,segmentsFlatPower,label='base power',color='blue')
-        self.ax.plot(segmentsX,segmentsDragPower,label='drag power',color='green')
-        self.ax.plot(segmentsX,segmentsSlopePower,label='slope power',color='orange')
+        self.ax.plot(segmentsX,segmentsPower,label='total power')
+        self.ax.plot(segmentsX,segmentsFlatPower,label='base power')
+        self.ax.plot(segmentsX,segmentsDragPower,label='drag power')
+        self.ax.plot(segmentsX,segmentsSlopePower,label='slope power')
         
-        self.ax.set_title('Power per segment')
+        self.ax.set_title('Power vs. Distance')
         self.ax.legend(loc='upper left')
-        self.ax.set_xlabel('Distance (m)')
+        self.ax.set_xlabel('Distance (km)')
         self.ax.set_ylabel('Power (w)')
         self.ax.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig.tight_layout()
@@ -212,15 +315,15 @@ class Performance:
         segmentsV = []
 
         for segmentPerformance in self.segmentPerformances:
-            segmentsX.append(segmentPerformance.segment.x0)
-            segmentsX.append(segmentPerformance.segment.x1)
+            segmentsX.append(segmentPerformance.segment.x0/1000)
+            segmentsX.append(segmentPerformance.segment.x1/1000)
             segmentsV.append(segmentPerformance.v)
             segmentsV.append(segmentPerformance.v)
         
         self.ax3.plot(segmentsX,segmentsV)
-        self.ax3.set_title('Power per segment')
+        self.ax3.set_title('Speed vs. Distance')
         #self.ax3.legend(loc='upper left')
-        self.ax3.set_xlabel('Distance (m)')
+        self.ax3.set_xlabel('Distance (km)')
         self.ax3.set_ylabel('V (m/s)')
         self.ax3.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig3.tight_layout()
@@ -245,12 +348,12 @@ class Performance:
             segmentsSlopePower.append(segmentPerformance.slopePower)
             segmentsSlopePower.append(segmentPerformance.slopePower)
             
-        self.ax1.plot(segmentsX,segmentsPower,label='total power',color='red')
-        self.ax1.plot(segmentsX,segmentsFlatPower,label='base power',color='blue')
-        self.ax1.plot(segmentsX,segmentsDragPower,label='drag power',color='green')
-        self.ax1.plot(segmentsX,segmentsSlopePower,label='slope power',color='orange')
+        self.ax1.plot(segmentsX,segmentsPower,label='total power')
+        self.ax1.plot(segmentsX,segmentsFlatPower,label='base power')
+        self.ax1.plot(segmentsX,segmentsDragPower,label='drag power')
+        self.ax1.plot(segmentsX,segmentsSlopePower,label='slope power')
         
-        self.ax1.set_title('Power per segment')
+        self.ax1.set_title('Power vs. Time')
         self.ax1.legend(loc='upper left')
         self.ax1.set_xlabel('Duration (s)')
         self.ax1.set_ylabel('Power (w)')
@@ -266,19 +369,11 @@ class Performance:
         self.timeMissing = 1
         self.duration = 0
         while(self.timeMissing):
-            self.segmentPerformances = []
+            
             if self.powerGuess > self.athlete.vo2maxPower or self.powerGuess < 10:
                 print('failed')
                 return self.duration, self.powerGuess
-            self.duration = 0
-            for segment in self.course.segments:
-                segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment,self.powerGuess)
-                #segmentPerformance.getTimeFromPower(athlete,environment,powerGuess)
-                segmentPerformance.setStart(self.duration)
-                self.segmentPerformances.append(segmentPerformance)
-                self.duration += segmentPerformance.duration
-            #print('powerGuess ',powerGuess)
-            #print('duration ', duration)
+            self.getDuration(self.powerGuess)
             self.limDuration = powerDuration.getDuration(self.powerGuess)
             #print('limduration ',limDuration)
             self.error = self.duration-self.limDuration
@@ -290,34 +385,83 @@ class Performance:
                 self.powerGuess = self.powerGuess*(1-0.01*self.errorFrac)
             else:
                 return self.duration, self.powerGuess
+            
+    def getEvenSplitRaceTime(self,considerNormalizedPower = True):
+        #environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = athlete.vo2maxPower
+        self.errorLim = 0.0001
+
+        powerDuration = self.athlete.powerDuration
+        self.vGuess = 3
+        self.timeMissing = 1
+        self.duration = 0
+        while(self.timeMissing):
+            
+            self.energySum = 0
+            #if self.power > self.athlete.vo2maxPower or self.power < 10:
+            #    print('failed')
+            #    return self.duration, self.vGuess
+            self.getDurationV(self.vGuess)
+            self.normPower = self.getNormalizedPower()
+            #print('powerGuess ',powerGuess)
+            #print('duration ', duration)
+            if considerNormalizedPower:
+                self.limDuration = powerDuration.getDuration(self.normPower)
+            else:
+                self.limDuration = powerDuration.getDuration(self.averagePower)
+            #print('limduration ',limDuration)
+            self.error = self.duration-self.limDuration
+            self.errorFrac = self.error/self.duration
+            #print('errorFrac ',errorFrac)
+            #print('normPower',self.normPower)
+            #print('vguess',self.vGuess)
+            if (self.errorFrac)>self.errorLim:
+                self.vGuess = self.vGuess*(1-0.01*self.errorFrac)
+            elif (self.errorFrac)<-self.errorLim:
+                self.vGuess = self.vGuess*(1-0.01*self.errorFrac)
+            else:
+                return self.duration, self.vGuess, self.averagePower
+            
         
 
 
 class SegmentPerformance:
-    def __init__(self,segment, athlete, environment, power):
+    def __init__(self,segment, athlete, environment):
         self.segment = segment
-        self.duration = self.getTimeFromPower(athlete, environment, power)
-        self.velocity = self.v
-        self.dragPower = self.getDragPower(environment,athlete,self.v)
-        self.slopePower = self.getSlopePower(environment,athlete,segment,self.v)
-        self.flatPower = self.getFlatPower(environment,athlete,self.v,segment.EcorMod)
-        self.power = self.dragPower+self.slopePower+self.flatPower
+        self.duration = 0
+        self.distance = segment.length
         #self.duration = self.getDuration(segment.length,self.v)
         self.time0 = 0
         self.time1 = self.duration
         
     def getTimeFromPower(self,athlete,environment,power):
         self.v = getV(environment.airDensity, athlete.Cd, athlete.frontalArea, environment.wind, athlete.Ecor, self.segment.slope, athlete.mass, environment.gravity, power)
-        self.duration = self.segment.length/self.v
+        #self.v = getViterate(environment,athlete,self.segment,power)
+        self.dragPower = self.getDragPower(environment,athlete,self.v)
+        self.slopePower = self.getSlopePower(environment,athlete,self.segment,self.v)
+        self.flatPower = self.getFlatPower(environment,athlete,self.v,self.segment.EcorMod)
+        self.duration = self.getDuration(self.segment.length,self.v)
+        self.flatEnergy = self.flatPower*self.duration
+        self.slopeEnergy = self.slopePower*self.duration
+        self.dragEnergy = self.dragPower*self.duration
+        self.power = power
+        self.energy = self.power*self.duration
         self.time1 = self.duration
+        
         return self.duration
     
     def getPowerFromV(self,athlete,environment,v):
+        self.v = v
         self.dragPower = self.getDragPower(environment,athlete,v)
         self.slopePower = self.getSlopePower(environment,athlete,self.segment,v)
         self.flatPower = self.getFlatPower(environment,athlete,v,self.segment.EcorMod)
+        self.duration = self.getDuration(self.segment.length,self.v)
+        self.flatEnergy = self.flatPower*self.duration
+        self.slopeEnergy = self.slopePower*self.duration
+        self.dragEnergy = self.dragPower*self.duration
         self.power = self.dragPower+self.slopePower+self.flatPower
-        self.duration = self.getDuration(self.segment.length,v)
+        self.energy = self.power*self.duration
+        self.time0 = 0
+        self.time1 = self.duration
         
     def getSlopePower(self,environment, athlete, segment, velocity):
         eta = (45.6+1.1622*segment.slope*100)/100
@@ -402,18 +546,12 @@ def readCourse(pathToCourseFile,name):
         course = Course(segments,name)
         return course
 
+
 def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
     Ecor = Ecor*gravity/9.81
     # slope is a decimal value
     # given a power, solve for velocity
     eta = (45.6+1.1622*slope*100)/100
-    # a = 0.5*airDensity*Cd*frontalArea
-    # b = 2*0.5*airDensity*Cd*frontalArea*wind
-    # c = 0.5*airDensity*Cd*frontalArea*wind**2+Ecor*mass*math.cos(math.atan(slope))+eta*mass*gravity*math.sin(math.atan(slope))
-    # d = power
-    # part1 = (((-b**3/(27*a**3))+(b*c/(6*a**2))-(d/(2*a)))+(((-b**3/(27*a**3))+(b*c/(6*a**2))-(d/(2*a)))**2+((c/(3*a))-(b**2/(9*a**2)))**3)**0.5)**(1/3)
-    # part2 = (((-b**3/(27*a**3))+(b*c/(6*a**2))-(d/(2*a)))-(((-b**3/(27*a**3))+(b*c/(6*a**2))-(d/(2*a)))**2+((c/(3*a))-(b**2/(9*a**2)))**3)**0.5)**(1/3)
-    # part3 = b/(3*a)
     
     c = Ecor
     d = airDensity
@@ -425,37 +563,87 @@ def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
     g = gravity
     q = frontalArea*Cd
     v=(0.26457*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))/(d*q)-(0.41997*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s))/(d*q*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))-0.66667*w
+    
+    a = m*g*s*n+c*m
+    b = 1/2*d*q
+    #v = getVnew2(a, b, p, w)
     return v
+
+
+def getVnew1(a, b, p, w):
+    # a = m*g*s*eta+c*m
+    # b = 1/2*rho*Cd*A
+    # p = power
+    # w = headwind speed
+    
+    return -(1/(3*(2)**(1/3)*b))*(-18*a*b**2*w+math.sqrt(4*(3*a*b-b**2*w**2)**3+(-18*a*b**2*w-2*b**3*w**3-27*b**2*p)**2)-2*b**3*w**3-27*b**2*p)**(1/3)/(3*2**(1/3)*b)+(2**(1/3)*(3*a*b-b**2*w**2))/(3*b*(-18*a*b**2*w+math.sqrt(4*(3*a*b-b**2*w**2)**3+(-18*a*b**2*w-2*b**3*w**3-27*b**2*p)**2)-2*b**3*w**3-27*b**2*p)**(1/3))-(2*w)/3
+    
+def getVnew2(a, b, p, w):
+    # a = m*g*s*eta+c*m
+    # b = 1/2*rho*Cd*A
+    # p = power
+    # w = headwind speed
+    
+    return (1/(3*(2)**(1/3)*b))*(-18*a*b**2*w+math.sqrt(4*(-3*a*b-b**2*w**2)**3+(-18*a*b**2*w+2*b**3*w**3-27*b**2*p)**2)+2*b**3*w**3-27*b**2*p)**(1/3)/(3*2**(1/3)*b)-(2**(1/3)*(-3*a*b-b**2*w**2))/(3*b*(-18*a*b**2*w+math.sqrt(4*(-3*a*b-b**2*w**2)**3+(-18*a*b**2*w+2*b**3*w**3-27*b**2*p)**2)+2*b**3*w**3-27*b**2*p)**(1/3))-(2*w)/3
+
+def getViterate(environment, athlete, segment,power):
+    Ecor = athlete.Ecor
+    airDensity = environment.airDensity
+    wind = environment.wind
+    mass = athlete.mass
+    slope = segment.slope
+    gravity = environment.gravity
+    frontalArea = athlete.frontalArea
+    Cd = athlete.Cd
+    Ecor = Ecor*gravity/9.81
+    # slope is a decimal value
+    # given a power, solve for velocity
+    eta = (45.6+1.1622*slope*100)/100
+    
+    c = Ecor
+    d = airDensity
+    w = wind
+    m = mass
+    n = eta
+    s = slope
+    p = power
+    g = gravity
+    q = frontalArea*Cd
+    
+    a = m*g*s*n+c*m # p = v*a -> v = p/a
+    #guess v from flat and slope
+    v = power/a
+    error = 99
+    errorlim = 0.0001
+    numIter = 0
+    while abs(error)>errorlim:
+        numIter += 1
+        
+        p = getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, v)
+        
+        error = (p-power)/power
+        #print('Iter: ',numIter,'Vguess: ',v,'p: ',p,'error: ',error)
+        if error>errorlim:
+            # p too large
+            v = v*(1-min(error,1)*0.5)
+        elif error<-errorlim:
+            # p too small
+            v = v*(1+min(abs(error),1)*0.5)
+        else:
+            #print('v found: ',v,'error: ',error, 'numIterations: ',numIter)
+            return v
+            
+    #calculate p
+    #if p too low, increase v
+    #if p too high, decrease v
+    #if error < tol, return v
 
 def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity):
     Ecor = Ecor*gravity/9.81
     eta = (45.6+1.1622*slope*100)/100
     return Ecor*mass*velocity+0.5*airDensity*Cd*frontalArea*(velocity+wind)**2*velocity+slope*mass*gravity*velocity*eta
 
-# def powerDuration(distance, time,airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity):
-#     # given a base distance duration (race result) and a fatigue resistance, calculate velocity vs distance
-#     # at each velocity, calculate power (from flat ground including air resistance - assuming typical race conditions)
-#     # calculate duration from distance/velocity
-#     # plot power vs duration
-#     rF = 0.07
-#     v0 = distance/time
-#     d0 = distance
-#     d = np.arange(1600,300000,10000)
-#     v = v0*(d/d0)**-rF
-#     print(v)
-#     duration = np.divide(d,v)
-#     p = []
-#     for i in range(len(v)):
-#         power = getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, v[i])
-#         p.append(power)
-#     p = np.asarray(p)
-#     print(p)
-#     plt.figure()
-#     print(duration.size)
-#     print(p.size)
-#     plt.plot(duration,p)
-#     return duration, p
-    
+
 class PowerDuration:
     def __init__(self, glucoseConsumption = 60, startingGlycogen = 3000, vo2maxPower = 347,temp = 5, altitude=0):
         self.tempK = temp+273
@@ -521,17 +709,7 @@ class PowerDuration:
         self.ax2.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig2.tight_layout()
         
-    
 
-# process to determine race time
-# choose a 
-# calculate race time
-# if error(race time - duration) > errorLim , increase power by 0.1* errorFrac*power
-# if error(race time - duration) < -errorLim, decrease power by 0.1*errorFrac*power
-
-
-
-        
 def getTime(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
