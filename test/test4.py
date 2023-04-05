@@ -28,24 +28,7 @@ environment = bonk.Environment(temperature = 5, humidity = 0, wind = 0, altitude
 athlete = bonk.Athlete(mass = 64, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5, vo2maxPower=5.42*64, glucoseConsumption = 60, startingGlycogen = 1500,temp=environment.temperature)
 bostonPerformance = bonk.Performance(environment,athlete,bostonCourse)
 
-raceTime, power = bostonPerformance.getOptimalRaceTime()
-
-
-print(bostonPerformance.averagePower)
-
-h, m, s = bonk.getTime(raceTime)
-out = 'Race time: {:02d}:{:02d}:{:02d}'
-print(out.format(int(h),int(m),int(s)))
-
-
-
-bostonPerformance.plotPowerDistance()
-bostonPerformance.plotVDistance()
-
-bostonPerformance.getMileSplits(relative = 0)
-print(bostonPerformance.getNormalizedPower())
-
-raceTime, power = bostonPerformance.getOptimalRaceTime()
+raceTime, power = bostonPerformance.getRaceTime()
 
 
 print(bostonPerformance.averagePower)
