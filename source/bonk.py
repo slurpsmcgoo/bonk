@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 from scipy import interpolate
+from scipy import optimize
 
 Body = Enum('Body',['Earth','Mars','Moon'])
 plotSize = (12, 8)
@@ -119,6 +120,7 @@ class Course:
         fig, ax = plt.subplots(figsize=(plotSize))#figsize=(7, 4)
         #x = 0
         #y = 0
+        
         for segment in self.segments:
             #segment.setStart(x,y)
             ax.plot([segment.x0/1000, segment.x1/1000],[segment.y0, segment.y1],'cornflowerblue')
@@ -146,6 +148,10 @@ class Performance:
         self.powerGuess = 0
         self.distance = 0
         self.interpDone = 0
+        self.initOptState = 0
+        for segment in self.course.segments:
+            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+            self.segmentPerformances.append(segmentPerformance)
         
     def getNormalizedPower(self,order=4):
         #samplingWindow = 30.0 #seconds
@@ -177,7 +183,7 @@ class Performance:
 
     def getMileSplits(self,relative=0):
         previousTime = 0
-        self.getDuration(self.power)
+        #self.getDuration(self.power)
         avgSpeed = self.distance/self.duration
         avgMileTime = 1609.0/avgSpeed
         for i in range(int(self.distance/1609)): # loop through miles
@@ -225,18 +231,18 @@ class Performance:
         self.speeds = []
         self.segDistances = []
         self.segDurations = []
-        self.segmentPerformances = []
+        #self.segmentPerformances = []
         self.powers = []
         self.distance = 0
         self.energy = 0
         self.averagePower = 0
         self.power = power
-        for segment in self.course.segments:
-            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+        for segmentPerformance in self.segmentPerformances:
+            #segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
             segmentPerformance.getTimeFromPower(self.athlete,self.environment,power)
             segmentPerformance.setStart(self.duration)
-            self.segDistances.append(segment.length)
-            self.segmentPerformances.append(segmentPerformance)
+            self.segDistances.append(segmentPerformance.distance)
+            #self.segmentPerformances.append(segmentPerformance)
             self.duration += segmentPerformance.duration
             self.distance += segmentPerformance.segment.length
             self.durations.append(self.duration)
@@ -248,6 +254,39 @@ class Performance:
         self.averagePower = self.energy/self.duration
         return self.duration
     
+    def getDurationArray(self,powerArray):
+        self.duration = 0
+        self.durations = []
+        self.distances = []
+        self.speeds = []
+        self.segDistances = []
+        self.segDurations = []
+        #self.segmentPerformances = []
+        self.powers = []
+        self.distance = 0
+        self.energy = 0
+        self.averagePower = 0
+        index = 0
+        for segmentPerformance in self.segmentPerformances:
+            #segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+            segmentPerformance.getTimeFromPower(self.athlete,self.environment,powerArray[index])
+            segmentPerformance.setStart(self.duration)
+            self.segDistances.append(segmentPerformance.distance)
+            #self.segmentPerformances.append(segmentPerformance)
+            self.duration += segmentPerformance.duration
+            self.distance += segmentPerformance.segment.length
+            self.durations.append(self.duration)
+            self.distances.append(self.distance)
+            self.speeds.append(segmentPerformance.distance/segmentPerformance.duration)
+            self.segDurations.append(segmentPerformance.duration)
+            
+            index+=1
+        self.powers=powerArray
+        
+        self.energy = np.sum(np.multiply(self.powers, self.segDurations))
+        self.averagePower = self.energy/self.duration
+        return self.duration
+    
     def getDurationV(self,v):
         self.duration = 0
         self.durations = []
@@ -255,18 +294,18 @@ class Performance:
         self.powers = []
         self.segDistances = []
         self.segDurations = []
-        self.segmentPerformances = []
+        #self.segmentPerformances = []
         self.distance = 0
         self.energy = 0
         self.averagePower = 0
         self.v = v
         self.speeds = []
-        for segment in self.course.segments:
-            segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
+        for segmentPerformance in self.segmentPerformances:
+            #segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
             segmentPerformance.getPowerFromV(self.athlete,self.environment,v)
             segmentPerformance.setStart(self.duration)
-            self.segDistances.append(segment.length)
-            self.segmentPerformances.append(segmentPerformance)
+            self.segDistances.append(segmentPerformance.distance)
+            #self.segmentPerformances.append(segmentPerformance)
             self.duration += segmentPerformance.duration
             self.distance += segmentPerformance.segment.length
             self.durations.append(self.duration)
@@ -277,6 +316,8 @@ class Performance:
         self.energy = np.sum(np.multiply(self.powers, self.segDurations))
         self.averagePower = self.energy/self.duration
         return self.duration
+    
+    
             
     def plotPowerDistance(self):
         self.fig, self.ax = plt.subplots(figsize=plotSize)
@@ -307,6 +348,10 @@ class Performance:
         self.ax.set_xlabel('Distance (km)')
         self.ax.set_ylabel('Power (w)')
         self.ax.grid(color='lightgrey', linestyle='-', linewidth=1)
+        self.ax2 = self.ax.twinx()
+        for segment in self.course.segments:
+            self.ax2.plot([segment.x0/1000, segment.x1/1000],[segment.y0, segment.y1],color='lightgrey')
+        self.ax2.set_ylabel('Elevation (m)')
         self.fig.tight_layout()
         
     def plotVDistance(self):
@@ -402,7 +447,7 @@ class Performance:
             #    return self.duration, self.vGuess
             self.getDurationV(self.vGuess)
             self.normPower = self.getNormalizedPower()
-            #print('powerGuess ',powerGuess)
+            #print('powerGuess ',self.vGuess)
             #print('duration ', duration)
             if considerNormalizedPower:
                 self.limDuration = powerDuration.getDuration(self.normPower)
@@ -421,6 +466,39 @@ class Performance:
             else:
                 return self.duration, self.vGuess, self.averagePower
             
+    def getOptimalRaceTime(self,considerNormalizedPower = True):
+        #environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = athlete.vo2maxPower
+        self.considerNormalizedPower = considerNormalizedPower
+        if self.initOptState==0:
+            xinit = []
+            powerDuration = self.athlete.powerDuration
+            self.bounds = []
+            self.duration = 0
+            for segmentPerformance in self.segmentPerformances:
+                xinit.append(segmentPerformance.segment.slope+1)
+                self.bounds.append((self.athlete.vo2maxPower*0.1,self.athlete.vo2maxPower))
+            #print(len(xinit))
+            x0 = np.asarray(xinit)*self.athlete.vo2maxPower*0.75
+            self.x0 = x0
+        #x0 = np.ones(len(self.segmentPerformances))*200
+        #print(x0)
+        self.result = optimize.minimize(self.costOptimalPower,self.x0,bounds = self.bounds)
+        x = self.result.x
+        self.x0 = x
+        self.initOptState = 1
+        return self.duration, x
+
+    def costOptimalPower(self,x0):
+        self.getDurationArray(x0)
+        self.normPower = self.getNormalizedPower()
+        if self.considerNormalizedPower:
+            self.limDuration = self.athlete.powerDuration.getDuration(self.normPower)
+        else:
+            self.limDuration = self.athlete.powerDuration.getDuration(self.averagePower)
+        self.error = (abs(self.duration-self.limDuration)*10000)**2
+        
+        self.cost = self.duration**2+self.error
+        return self.cost #abs(np.sum(x0)) #test
         
 
 
