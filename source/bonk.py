@@ -6,8 +6,10 @@
 
 from enum import Enum
 import csv
-import matplotlib.pyplot as plt
+import json
 import math
+import os
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy import interpolate
 from scipy import optimize
@@ -821,3 +823,73 @@ def getTime(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
     return h, m, s
+
+
+def gpx_to_course(gpx_file_path, name=None, ecor_mod=0.0, surface_tech_mod=0.0):
+    """Build a Course directly from a GPX file without writing an intermediate CSV.
+
+    Args:
+        name: Course name; defaults to the GPX filename.
+        ecor_mod: Fractional surface penalty applied to all segments (0 = firm road).
+        surface_tech_mod: Reserved terrain modifier applied to all segments.
+    """
+    import gpxpy
+
+    with open(gpx_file_path, 'r') as f:
+        gpx = gpxpy.parse(f)
+
+    points = [p for t in gpx.tracks for s in t.segments for p in s.points]
+
+    segments = []
+    for i in range(len(points) - 1):
+        p1, p2 = points[i], points[i + 1]
+        distance = haversine(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+        if distance == 0:
+            continue
+        elev_diff = (p2.elevation - p1.elevation) if (p2.elevation is not None and p1.elevation is not None) else 0
+        segments.append(Segment(i, distance, elev_diff, ecor_mod, surface_tech_mod))
+
+    course_name = name or os.path.basename(gpx_file_path)
+    return Course(segments, course_name)
+
+
+def save_athlete(params, path):
+    """Save athlete parameters to a JSON file.
+
+    Args:
+        params: Either an Athlete instance or a dict of parameter values.
+    """
+    if isinstance(params, Athlete):
+        data = {
+            'Ecor':                  params.Ecor,
+            'Cd':                    params.Cd,
+            'frontalArea':           params.frontalArea,
+            'vo2maxPower':           params.vo2maxPower,
+            'fatigueResistanceCoef': params.fatigueResistanceCoef,
+        }
+    else:
+        data = dict(params)
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def load_athlete(path, mass=70, glucoseConsumption=60, startingGlycogen=1500, temp=5, altitude=0):
+    """Load athlete parameters from a JSON file and return an Athlete.
+
+    Race-specific inputs (mass, glucoseConsumption, startingGlycogen, temp, altitude)
+    are not stored in the file and must be supplied here.
+    """
+    with open(path) as f:
+        p = json.load(f)
+    return Athlete(
+        mass=mass,
+        Ecor=p.get('Ecor', 0.98),
+        Cd=p.get('Cd', 0.5),
+        frontalArea=p.get('frontalArea', 0.5),
+        vo2maxPower=p.get('vo2maxPower', 347),
+        fatigueResistanceCoef=p.get('fatigueResistanceCoef', 0.07),
+        glucoseConsumption=glucoseConsumption,
+        startingGlycogen=startingGlycogen,
+        temp=temp,
+        altitude=altitude,
+    )

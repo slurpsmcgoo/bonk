@@ -1,0 +1,14 @@
+{
+  "races": [
+    {
+      "gpx": "test/Huron100_2024_Jack.gpx",
+      "mass": 65,
+      "temperature": 15
+    },
+    {
+      "gpx": "test/newport_marathon.gpx",
+      "mass": 65,
+      "temperature": 15
+    }
+  ]
+}
