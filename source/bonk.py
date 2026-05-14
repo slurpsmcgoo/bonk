@@ -776,6 +776,90 @@ def haversine(lat1, lon1, lat2, lon2):
     return c * 6371000
 
 
+def _is_in_us(points):
+    """Return True if all points fall within the US territory bounding box."""
+    for p in points:
+        if not (18.0 <= p.latitude <= 72.0 and -180.0 <= p.longitude <= -66.0):
+            return False
+    return True
+
+
+def _fill_elevation_opentopodata(points, dataset='ned10m'):
+    """Fill None elevations using the Open Topo Data public API (NED, ~10m resolution).
+
+    Sends up to 100 points per request with 1-second delays to respect the rate limit.
+    Only points with elevation=None are sent; existing values are preserved.
+    """
+    import requests
+    import time
+
+    missing = [(i, p) for i, p in enumerate(points) if p.elevation is None]
+    if not missing:
+        return
+
+    batch_size = 100
+    n_batches = (len(missing) + batch_size - 1) // batch_size
+    if n_batches > 1:
+        print(f'  Fetching elevation from Open Topo Data ({len(missing)} points, '
+              f'~{n_batches}s)...')
+
+    for b in range(n_batches):
+        batch = missing[b * batch_size:(b + 1) * batch_size]
+        locations = '|'.join(f'{p.latitude},{p.longitude}' for _, p in batch)
+        resp = requests.get(
+            f'https://api.opentopodata.org/v1/{dataset}',
+            params={'locations': locations},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for (_, p), result in zip(batch, resp.json()['results']):
+            p.elevation = result['elevation']  # None if outside dataset coverage
+        if b < n_batches - 1:
+            time.sleep(1.0)
+
+
+def _fill_elevation_srtm(points):
+    """Fill None elevations using cached SRTM tiles via srtm.py (~30m resolution).
+
+    Tiles are downloaded on first use and cached in ~/.cache/srtm.
+    """
+    import srtm
+    data = srtm.get_data()
+    for p in points:
+        if p.elevation is None:
+            p.elevation = data.get_elevation(p.latitude, p.longitude)
+
+
+def fill_elevation(points, source='auto'):
+    """Fill missing elevation data on a list of gpxpy trackpoints in place.
+
+    Args:
+        points: List of gpxpy trackpoint objects (with .latitude, .longitude, .elevation).
+        source: 'auto'          — Open Topo Data for US courses (falls back to SRTM),
+                                  SRTM directly for non-US courses.
+                'opentopodata'  — always use Open Topo Data (requires internet).
+                'srtm'          — always use srtm.py (downloads tiles on first use).
+    """
+    if not any(p.elevation is None for p in points):
+        return
+
+    if source == 'opentopodata':
+        _fill_elevation_opentopodata(points)
+    elif source == 'srtm':
+        _fill_elevation_srtm(points)
+    else:  # auto
+        if _is_in_us(points):
+            try:
+                _fill_elevation_opentopodata(points)
+                if any(p.elevation is None for p in points):
+                    # Some points outside NED coverage (e.g. Hawaii, territories)
+                    _fill_elevation_srtm(points)
+                return
+            except Exception as e:
+                print(f'  Open Topo Data failed ({e}), falling back to SRTM...')
+        _fill_elevation_srtm(points)
+
+
 def gpx_to_course_csv(gpx_file_path, ecor_mod=0.0, surface_tech_mod=0.0, output_csv_path=None):
     import gpxpy
 
@@ -785,6 +869,9 @@ def gpx_to_course_csv(gpx_file_path, ecor_mod=0.0, surface_tech_mod=0.0, output_
     track = gpx.tracks[0]
     segment = track.segments[0]
     points = segment.points
+
+    if any(p.elevation is None for p in points):
+        fill_elevation(points)
 
     segments_data = []
     for i in range(len(points) - 1):
@@ -839,6 +926,9 @@ def gpx_to_course(gpx_file_path, name=None, ecor_mod=0.0, surface_tech_mod=0.0):
         gpx = gpxpy.parse(f)
 
     points = [p for t in gpx.tracks for s in t.segments for p in s.points]
+
+    if any(p.elevation is None for p in points):
+        fill_elevation(points)
 
     segments = []
     for i in range(len(points) - 1):
