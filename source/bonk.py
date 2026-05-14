@@ -15,10 +15,21 @@ from scipy import optimize
 Body = Enum('Body',['Earth','Mars','Moon'])
 plotSize = (12, 8)
 
-#ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
-
 class Athlete:
-    # Athlete contains the properties of a runner
+    """A runner's physical and physiological properties.
+
+    Args:
+        Ecor: Energy cost of running on flat, hard surface (J/kg/m). Typical range
+              0.9–1.1; lower is more economical. Scaled by gravity/9.81 on other bodies.
+        Cd: Aerodynamic drag coefficient (dimensionless). ~0.5 for upright running posture.
+        frontalArea: Projected frontal area for aerodynamic drag calculation (m²).
+        vo2maxPower: Maximum aerobic power at sea level, 5°C (W). Reduced automatically
+                     for altitude and temperature via PowerDuration.
+        glucoseConsumption: Rate of external carbohydrate intake, e.g. from gels (g/h).
+        startingGlycogen: Onboard glycogen at race start (kcal). ~1500 after a meal.
+        temp: Ambient temperature (°C). Power output is penalised away from 5°C optimum.
+        altitude: Elevation above sea level (m).
+    """
     def __init__(self, mass = 70, Ecor = 0.98, fatigueResistanceCoef = 0.07, Cd = 0.5, frontalArea = 0.5, vo2maxPower=347, glucoseConsumption = 60, startingGlycogen = 1500,temp=5,altitude=0):
         self.mass = mass
         self.fatigueResistanceCoef = fatigueResistanceCoef
@@ -30,9 +41,6 @@ class Athlete:
         
         
     
-    def getRunningPowerDuration(self):
-        self.runningPowerDistribution = [500, 400, 300, 200, 100]
-	
     def getDetailedRunningEnergy(self):
         self.massUpperLeg = 5
         self.massLowerLeg = 3
@@ -40,11 +48,17 @@ class Athlete:
         self.massArm = 3
         self.massShoe = 0.25
         self.massClothing = 0.3
-        self.mass = self.massUpperLeg*2 + self.massLowerLeg*2 + self.massTorsoHead + self.massArm*2 + self.massShoe*2 + self.massClothing
+        self.massDetailed = self.massUpperLeg*2 + self.massLowerLeg*2 + self.massTorsoHead + self.massArm*2 + self.massShoe*2 + self.massClothing
 		
 	
 class Environment:
-    # Environment is contains global properties like temp and humidity, for now we assume constant
+    """Ambient conditions assumed constant over the entire course.
+
+    Args:
+        wind: Headwind speed (m/s). Positive values oppose the runner; negative = tailwind.
+        body: Celestial body — use the Body enum (1=Earth, 2=Mars, 3=Moon).
+              Non-Earth bodies set gravity and air density automatically.
+    """
     def __init__(self,temperature = 5, humidity = 0, wind = 0, altitude = 0, body = 1):
         self.temperature = temperature
         self.tempK = temperature+273
@@ -59,13 +73,13 @@ class Environment:
             self.M = 28.97 #g/mol
             self.gravity = 9.81
             self.airDensity = self.getAirDensity(altitude)
-        elif self.body == 2:
-            self.airDensity = 0.000001
-            self.density = self.airDensity
-            self.gravity = 1.62
-        elif self.body == 3:
+        elif self.body == 2:  # Mars
             self.airDensity = 0.02
+            self.density = self.airDensity
             self.gravity = 3.721
+        elif self.body == 3:  # Moon
+            self.airDensity = 0.000001
+            self.gravity = 1.62
             self.density = self.airDensity
         else:
             print('error: no known body')
@@ -77,7 +91,15 @@ class Environment:
             
         
 class Segment:
-    # Segment is an element of a course
+    """A single constant-grade section of a course.
+
+    Args:
+        elevGain: Elevation change over this segment (m). Negative for descent.
+                  In course CSV files this column is named 'slope' but stores metres.
+        EcorMod: Fractional increase in flat running energy cost due to surface, e.g.
+                 0.10 adds 10% to Ecor. Use for soft trail, sand, or snow.
+        surfaceTechMod: Reserved for technical terrain difficulty modifier (not yet used).
+    """
     def __init__(self,number=1, length = 1609, elevGain = 100, EcorMod = 0, surfaceTechMod = 0):
         self.number = number
         self.length = length
@@ -105,7 +127,7 @@ class Segment:
 
         
 class Course:
-    # Course is basically a collection of segments
+    """An ordered list of Segments representing a race course."""
     def __init__(self,segments,name):
         self.segments = segments
         x = 0
@@ -135,10 +157,14 @@ class Course:
 	
 
 class Performance:
-    # Performance is a combination of an athlete, environment, and course
-    # Performance is the sum of segment performances of a course
+    """Predicted race performance for a given athlete, environment, and course.
+
+    Three solving strategies are available:
+        getRaceTime: constant power across all segments — power is solved iteratively.
+        getEvenSplitRaceTime: constant velocity — speed is solved iteratively.
+        getOptimalRaceTime: per-segment power optimised for minimum total time.
+    """
     def __init__(self,environment,athlete,course):
-        #init
         self.environment = environment
         self.athlete = athlete
         self.course = course
@@ -153,7 +179,12 @@ class Performance:
             segmentPerformance = SegmentPerformance(segment,self.athlete,self.environment)
             self.segmentPerformances.append(segmentPerformance)
         
-    def getNormalizedPower(self,order=4):
+    def getNormalizedPower(self, order=4):
+        """Duration-weighted power mean raised to `order`, per Coggan's normalized power.
+
+        NP = (Σ(P^order * t_i) / T)^(1/order). Higher than average power on variable
+        terrain because physiological cost scales super-linearly with intensity.
+        """
         #samplingWindow = 30.0 #seconds
         #powers = []
         #if self.interpDone == 0:
@@ -405,69 +436,62 @@ class Performance:
         self.ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig1.tight_layout()
         
-    def getRaceTime(self):
-        #environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = athlete.vo2maxPower
+    def getRaceTime(self, maxIter=10000):
+        """Solve for the constant power that exactly exhausts the athlete's power-duration
+        capacity over the course. Returns (duration_s, power_W)."""
         self.errorLim = 0.0001
 
         powerDuration = self.athlete.powerDuration
         self.powerGuess = self.athlete.vo2maxPower
-        self.timeMissing = 1
         self.duration = 0
-        while(self.timeMissing):
-            
+        for _ in range(maxIter):
             if self.powerGuess > self.athlete.vo2maxPower or self.powerGuess < 10:
                 print('failed')
                 return self.duration, self.powerGuess
             self.getDuration(self.powerGuess)
             self.limDuration = powerDuration.getDuration(self.powerGuess)
-            #print('limduration ',limDuration)
             self.error = self.duration-self.limDuration
             self.errorFrac = self.error/self.duration
-            #print('errorFrac ',errorFrac)
-            if (self.errorFrac)>self.errorLim:
-                self.powerGuess = self.powerGuess*(1-0.01*self.errorFrac)
-            elif (self.errorFrac)<-self.errorLim:
-                self.powerGuess = self.powerGuess*(1-0.01*self.errorFrac)
-            else:
+            if abs(self.errorFrac) <= self.errorLim:
                 return self.duration, self.powerGuess
+            self.powerGuess = self.powerGuess*(1-0.01*self.errorFrac)
+        print('getRaceTime did not converge')
+        return self.duration, self.powerGuess
             
-    def getEvenSplitRaceTime(self,considerNormalizedPower = True):
-        #environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = athlete.vo2maxPower
+    def getEvenSplitRaceTime(self, considerNormalizedPower=True, maxIter=10000):
+        """Solve for the constant velocity that exactly exhausts the athlete's capacity.
+
+        Args:
+            considerNormalizedPower: If True, compare against normalized power (recommended
+                for hilly courses); if False, use average power (appropriate for flat).
+        Returns (duration_s, velocity_m_s, avg_power_W).
+        """
         self.errorLim = 0.0001
 
         powerDuration = self.athlete.powerDuration
         self.vGuess = 3
-        self.timeMissing = 1
         self.duration = 0
-        while(self.timeMissing):
-            
-            self.energySum = 0
-            #if self.power > self.athlete.vo2maxPower or self.power < 10:
-            #    print('failed')
-            #    return self.duration, self.vGuess
+        for _ in range(maxIter):
             self.getDurationV(self.vGuess)
             self.normPower = self.getNormalizedPower()
-            #print('powerGuess ',self.vGuess)
-            #print('duration ', duration)
             if considerNormalizedPower:
                 self.limDuration = powerDuration.getDuration(self.normPower)
             else:
                 self.limDuration = powerDuration.getDuration(self.averagePower)
-            #print('limduration ',limDuration)
             self.error = self.duration-self.limDuration
             self.errorFrac = self.error/self.duration
-            #print('errorFrac ',errorFrac)
-            #print('normPower',self.normPower)
-            #print('vguess',self.vGuess)
-            if (self.errorFrac)>self.errorLim:
-                self.vGuess = self.vGuess*(1-0.01*self.errorFrac)
-            elif (self.errorFrac)<-self.errorLim:
-                self.vGuess = self.vGuess*(1-0.01*self.errorFrac)
-            else:
+            if abs(self.errorFrac) <= self.errorLim:
                 return self.duration, self.vGuess, self.averagePower
+            self.vGuess = self.vGuess*(1-0.01*self.errorFrac)
+        print('getEvenSplitRaceTime did not converge')
+        return self.duration, self.vGuess, self.averagePower
             
-    def getOptimalRaceTime(self,considerNormalizedPower = True):
-        #environment,athlete,course,powerDuration,errorLim = 0.0001,powerGuess = athlete.vo2maxPower
+    def getOptimalRaceTime(self, considerNormalizedPower=True):
+        """Find the per-segment power allocation that minimises total race time subject
+        to the athlete's power-duration constraint. Uses scipy.optimize.minimize.
+        Calling repeatedly warm-starts from the previous solution.
+        Returns (duration_s, power_array_W).
+        """
         self.considerNormalizedPower = considerNormalizedPower
         if self.initOptState==0:
             xinit = []
@@ -512,8 +536,7 @@ class SegmentPerformance:
         self.time1 = self.duration
         
     def getTimeFromPower(self,athlete,environment,power):
-        self.v = getV(environment.airDensity, athlete.Cd, athlete.frontalArea, environment.wind, athlete.Ecor, self.segment.slope, athlete.mass, environment.gravity, power)
-        #self.v = getViterate(environment,athlete,self.segment,power)
+        self.v = getV(environment.airDensity, athlete.Cd, athlete.frontalArea, environment.wind, athlete.Ecor*(1+self.segment.EcorMod), self.segment.slope, athlete.mass, environment.gravity, power)
         self.dragPower = self.getDragPower(environment,athlete,self.v)
         self.slopePower = self.getSlopePower(environment,athlete,self.segment,self.v)
         self.flatPower = self.getFlatPower(environment,athlete,self.v,self.segment.EcorMod)
@@ -542,15 +565,19 @@ class SegmentPerformance:
         self.time1 = self.duration
         
     def getSlopePower(self,environment, athlete, segment, velocity):
+        # eta is a grade-dependent efficiency factor from Van Dijk & Van Megan (2017).
+        # At 0% grade eta≈0.456; steeper grades increase metabolic cost non-linearly.
         eta = (45.6+1.1622*segment.slope*100)/100
         slopePower = athlete.mass*velocity*environment.gravity*(segment.slope)*eta
-        return slopePower	
-    	
+        return slopePower
+
     def getDragPower(self,environment, athlete, velocity):
         dragPower = 0.5*environment.airDensity*athlete.Cd*athlete.frontalArea*(velocity+environment.wind)**2*velocity
         return dragPower
-    
+
     def getFlatPower(self,environment, athlete, velocity, EcorMod):
+        # gravity/9.81 normalises Ecor (calibrated at Earth sea level) for other bodies.
+        # EcorMod is a fractional surface penalty on top of Ecor (0.10 = 10% harder).
         flatPower = athlete.mass*athlete.Ecor*environment.gravity/9.81*(1+EcorMod)*velocity
         return flatPower
     
@@ -590,7 +617,7 @@ def plotDragPower(environment, athlete, velocity):
     dragPowers = []
     winds = np.arange(-10,11,1)
     for wind in winds:
-        dragPower = 0.5*environment.density*athlete.Cd*athlete.frontalArea*(velocity+wind)**2*velocity*np.sign(velocity+wind)
+        dragPower = 0.5*environment.airDensity*athlete.Cd*athlete.frontalArea*(velocity+wind)**2*velocity*np.sign(velocity+wind)
         dragPowers.append(dragPower)
     fig1, ax1 = plt.subplots(figsize=plotSize)
     ax1.plot(winds/velocity*100,dragPowers,color='orange')
@@ -605,11 +632,16 @@ def getFlatPower(environment, athlete, velocity, EcorMod):
     return flatPower
 
 def readCourse(pathToCourseFile,name):
-    # read in segments line by line and create course object
+    """Load a course from a space-delimited CSV file.
+
+    CSV columns: number  length  slope  EcorMod  surfaceTechMod
+      length   — horizontal segment length (m)
+      slope    — elevation gain for this segment (m, negative for descent)
+      EcorMod  — fractional surface penalty on flat energy cost (0 = firm road)
+      surfaceTechMod — reserved for technical terrain modifier (currently unused)
+    """
     segments = []
     with open(pathToCourseFile, newline='') as csvfile:
-    #elements of description:
-        #number length slope EcorMod surfaceTechMod
         courseDescription = csv.DictReader(csvfile, delimiter=' ')
     
         for seg in courseDescription:
@@ -626,9 +658,12 @@ def readCourse(pathToCourseFile,name):
 
 
 def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
+    """Analytically solve for running velocity given mechanical power output.
+
+    Closes the cubic P = Ecor·m·v + 0.5·ρ·Cd·A·(v+w)²·v + m·g·s·η·v
+    using the real root of the cubic formula. slope is a decimal fraction (rise/run).
+    """
     Ecor = Ecor*gravity/9.81
-    # slope is a decimal value
-    # given a power, solve for velocity
     eta = (45.6+1.1622*slope*100)/100
     
     c = Ecor
@@ -642,79 +677,9 @@ def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
     q = frontalArea*Cd
     v=(0.26457*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))/(d*q)-(0.41997*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s))/(d*q*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))-0.66667*w
     
-    a = m*g*s*n+c*m
-    b = 1/2*d*q
-    #v = getVnew2(a, b, p, w)
     return v
 
 
-def getVnew1(a, b, p, w):
-    # a = m*g*s*eta+c*m
-    # b = 1/2*rho*Cd*A
-    # p = power
-    # w = headwind speed
-    
-    return -(1/(3*(2)**(1/3)*b))*(-18*a*b**2*w+math.sqrt(4*(3*a*b-b**2*w**2)**3+(-18*a*b**2*w-2*b**3*w**3-27*b**2*p)**2)-2*b**3*w**3-27*b**2*p)**(1/3)/(3*2**(1/3)*b)+(2**(1/3)*(3*a*b-b**2*w**2))/(3*b*(-18*a*b**2*w+math.sqrt(4*(3*a*b-b**2*w**2)**3+(-18*a*b**2*w-2*b**3*w**3-27*b**2*p)**2)-2*b**3*w**3-27*b**2*p)**(1/3))-(2*w)/3
-    
-def getVnew2(a, b, p, w):
-    # a = m*g*s*eta+c*m
-    # b = 1/2*rho*Cd*A
-    # p = power
-    # w = headwind speed
-    
-    return (1/(3*(2)**(1/3)*b))*(-18*a*b**2*w+math.sqrt(4*(-3*a*b-b**2*w**2)**3+(-18*a*b**2*w+2*b**3*w**3-27*b**2*p)**2)+2*b**3*w**3-27*b**2*p)**(1/3)/(3*2**(1/3)*b)-(2**(1/3)*(-3*a*b-b**2*w**2))/(3*b*(-18*a*b**2*w+math.sqrt(4*(-3*a*b-b**2*w**2)**3+(-18*a*b**2*w+2*b**3*w**3-27*b**2*p)**2)+2*b**3*w**3-27*b**2*p)**(1/3))-(2*w)/3
-
-def getViterate(environment, athlete, segment,power):
-    Ecor = athlete.Ecor
-    airDensity = environment.airDensity
-    wind = environment.wind
-    mass = athlete.mass
-    slope = segment.slope
-    gravity = environment.gravity
-    frontalArea = athlete.frontalArea
-    Cd = athlete.Cd
-    Ecor = Ecor*gravity/9.81
-    # slope is a decimal value
-    # given a power, solve for velocity
-    eta = (45.6+1.1622*slope*100)/100
-    
-    c = Ecor
-    d = airDensity
-    w = wind
-    m = mass
-    n = eta
-    s = slope
-    p = power
-    g = gravity
-    q = frontalArea*Cd
-    
-    a = m*g*s*n+c*m # p = v*a -> v = p/a
-    #guess v from flat and slope
-    v = power/a
-    error = 99
-    errorlim = 0.0001
-    numIter = 0
-    while abs(error)>errorlim:
-        numIter += 1
-        
-        p = getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, v)
-        
-        error = (p-power)/power
-        #print('Iter: ',numIter,'Vguess: ',v,'p: ',p,'error: ',error)
-        if error>errorlim:
-            # p too large
-            v = v*(1-min(error,1)*0.5)
-        elif error<-errorlim:
-            # p too small
-            v = v*(1+min(abs(error),1)*0.5)
-        else:
-            #print('v found: ',v,'error: ',error, 'numIterations: ',numIter)
-            return v
-            
-    #calculate p
-    #if p too low, increase v
-    #if p too high, decrease v
-    #if error < tol, return v
 
 def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity):
     Ecor = Ecor*gravity/9.81
@@ -723,6 +688,18 @@ def getP(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, velocity
 
 
 class PowerDuration:
+    """Maps sustainable power to duration using three independent limits:
+    glycogen depletion (energy-limited), empirical power-duration curve (neuromuscular),
+    and sleep deprivation (ultra-distance).
+
+    Args:
+        glucoseConsumption: External carbohydrate intake rate, e.g. from gels (g/h).
+                            Offsets glucose burning and extends glycogen-limited duration.
+        startingGlycogen: Muscle and liver glycogen at race start (kcal). Typical
+                          well-fuelled athlete ~1500–2000 kcal.
+        vo2maxPower: Maximum aerobic power at sea level, 5°C (W). Reduced by altitude
+                     (quadratic fit) and temperature (linear away from 5°C optimum).
+    """
     def __init__(self, glucoseConsumption = 60, startingGlycogen = 3000, vo2maxPower = 347,temp = 5, altitude=0):
         self.tempK = temp+273
         self.tempFrac = abs(self.tempK/(273+5)-1)
@@ -764,7 +741,7 @@ class PowerDuration:
     def getDuration(self,power):
         return np.interp(power,self.power,self.duration)
     def getPower(self,duration):
-        return np.interp(duration,self.duration,self.power)
+        return np.interp(duration,self.duration[::-1],self.power[::-1])
     def plotPowerDuration(self,maxDuration = 24,temp=5):
         self.fig1, self.ax1 = plt.subplots(figsize=plotSize)
         self.ax1.plot(self.duration/3600,self.power,color='orange')
@@ -787,6 +764,58 @@ class PowerDuration:
         self.ax2.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig2.tight_layout()
         
+
+def haversine(lat1, lon1, lat2, lon2):
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    return c * 6371000
+
+
+def gpx_to_course_csv(gpx_file_path, ecor_mod=0.0, surface_tech_mod=0.0, output_csv_path=None):
+    import gpxpy
+
+    with open(gpx_file_path, 'r') as gpx_file:
+        gpx = gpxpy.parse(gpx_file)
+
+    track = gpx.tracks[0]
+    segment = track.segments[0]
+    points = segment.points
+
+    segments_data = []
+    for i in range(len(points) - 1):
+        p1 = points[i]
+        p2 = points[i+1]
+        lat1, lon1, ele1 = p1.latitude, p1.longitude, p1.elevation
+        lat2, lon2, ele2 = p2.latitude, p2.longitude, p2.elevation
+
+        distance = haversine(lat1, lon1, lat2, lon2)
+        if distance == 0:
+            continue
+
+        elev_diff = (ele2 - ele1) if ele2 is not None and ele1 is not None else 0
+
+        segments_data.append({
+            'number': i,
+            'length': distance,
+            'slope': elev_diff,
+            'EcorMod': ecor_mod,
+            'surfaceTechMod': surface_tech_mod
+        })
+
+    csv_file_path = output_csv_path or gpx_file_path.replace('.gpx', '.csv')
+    with open(csv_file_path, 'w', newline='') as csvfile:
+        fieldnames = ['number', 'length', 'slope', 'EcorMod', 'surfaceTechMod']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=' ')
+        writer.writeheader()
+        for seg in segments_data:
+            writer.writerow(seg)
+
+    print(f"Course CSV generated: {csv_file_path}")
+    return csv_file_path
+
 
 def getTime(seconds):
     m, s = divmod(seconds, 60)
