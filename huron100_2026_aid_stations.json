@@ -1,0 +1,35 @@
+{
+  "race_name": "2026 Huron 100",
+  "race_date": "2026-06-06",
+  "start_time": "09:00:00",
+  "timezone": "America/Detroit",
+  "start_lat": 42.3333,
+  "start_lon": -84.2358,
+  "total_nominal_miles": 100.0,
+  "bag_size_g": 95,
+  "scenarios": {
+    "best":     {"k": 0.000,  "label": "Best Case (no fade)",   "color": "steelblue"},
+    "expected": {"k": 0.001,  "label": "Expected",              "color": "darkorange"},
+    "worst":    {"k": 0.003,  "label": "Worst Case (bad fade)", "color": "crimson"}
+  },
+  "aid_stations": [
+    {"name": "Start Waterloo-Pinckney",   "cumulative_miles": 0.0,  "drop_bag": true,  "crew": true,  "pacer": false, "cutoff_h": null, "aid_type": "Full"},
+    {"name": "AS1 Mt. Hope Road",         "cumulative_miles": 6.7,  "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "H2O Only"},
+    {"name": "AS2 Baldwin Road",          "cumulative_miles": 10.6, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "Full"},
+    {"name": "AS3 Discovery Center",      "cumulative_miles": 18.6, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "Full"},
+    {"name": "AS4 Park Lyndon East",      "cumulative_miles": 24.4, "drop_bag": true,  "crew": true,  "pacer": false, "cutoff_h": 8.25,  "aid_type": "Full"},
+    {"name": "AS5 Hankerd Road",          "cumulative_miles": 31.1, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "H2O Only"},
+    {"name": "AS6 Silver Lake",           "cumulative_miles": 35.4, "drop_bag": false, "crew": true,  "pacer": false, "cutoff_h": 11.75, "aid_type": "Full"},
+    {"name": "AS7 Gosling Lake",          "cumulative_miles": 40.7, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "Full"},
+    {"name": "AS8 Lakelands Trail",       "cumulative_miles": 47.1, "drop_bag": true,  "crew": true,  "pacer": true,  "cutoff_h": 15.25, "aid_type": "Full"},
+    {"name": "AS9 Maple Shelter",         "cumulative_miles": 55.0, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": 18.0,  "aid_type": "Full"},
+    {"name": "AS10 Teahen Road",          "cumulative_miles": 59.6, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "H2O Only"},
+    {"name": "AS11 Sandhill Shelter",     "cumulative_miles": 62.8, "drop_bag": false, "crew": true,  "pacer": true,  "cutoff_h": 21.0,  "aid_type": "Full"},
+    {"name": "AS12 Huron Meadows",        "cumulative_miles": 69.5, "drop_bag": true,  "crew": true,  "pacer": true,  "cutoff_h": 23.0,  "aid_type": "Full"},
+    {"name": "AS13 Fire Trail",           "cumulative_miles": 75.0, "drop_bag": false, "crew": false, "pacer": false, "cutoff_h": null, "aid_type": "H2O Only"},
+    {"name": "AS14 Spring Mill Pond",     "cumulative_miles": 79.5, "drop_bag": false, "crew": true,  "pacer": true,  "cutoff_h": 27.0,  "aid_type": "Full"},
+    {"name": "AS15 Hickory Shelter",      "cumulative_miles": 87.0, "drop_bag": false, "crew": true,  "pacer": true,  "cutoff_h": 29.0,  "aid_type": "Full"},
+    {"name": "AS16 Windfall Hill",        "cumulative_miles": 92.0, "drop_bag": false, "crew": true,  "pacer": true,  "cutoff_h": 30.0,  "aid_type": "Full"},
+    {"name": "Finish Proud Lake",         "cumulative_miles": 100.0,"drop_bag": true,  "crew": true,  "pacer": false, "cutoff_h": 32.0,  "aid_type": "Full"}
+  ]
+}

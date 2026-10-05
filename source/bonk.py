@@ -438,28 +438,163 @@ class Performance:
         self.ax1.grid(color='lightgrey', linestyle='-', linewidth=1)
         self.fig1.tight_layout()
         
-    def getRaceTime(self, maxIter=10000):
+    def _ensure_arrays(self):
+        """Precompute per-segment numpy arrays for vectorized duration calculation."""
+        if hasattr(self, '_seg_lengths'):
+            return
+        segs = [sp.segment for sp in self.segmentPerformances]
+        self._seg_lengths = np.array([s.length for s in segs])
+        self._seg_slopes = np.array([s.slope for s in segs])
+        self._seg_ecor_mods = np.array([s.EcorMod for s in segs])
+
+    def getDurationFast(self, power, ecor_mod=None):
+        """Vectorized race duration for a constant power output.
+
+        Replaces the Python loop in getDuration for use inside solvers.
+        ecor_mod overrides all per-segment EcorMod values when supplied (used during
+        calibration to fit surface difficulty as a single course-level parameter).
+        Returns total duration in seconds; does NOT populate segmentPerformances state.
+        """
+        self._ensure_arrays()
+        mods = self._seg_ecor_mods if ecor_mod is None else np.full(len(self._seg_ecor_mods), ecor_mod)
+        effective_ecor = self.athlete.Ecor * (1.0 + mods)
+        vs = getV(self.environment.airDensity, self.athlete.Cd, self.athlete.frontalArea,
+                  self.environment.wind, effective_ecor, self._seg_slopes,
+                  self.athlete.mass, self.environment.gravity, power)
+        self.duration = float(np.sum(self._seg_lengths / vs))
+        return self.duration
+
+    def getRaceTime(self, ecor_mod=None):
         """Solve for the constant power that exactly exhausts the athlete's power-duration
-        capacity over the course. Returns (duration_s, power_W)."""
-        self.errorLim = 0.0001
+        capacity over the course. Uses brentq for fast convergence (~15 iterations).
+        ecor_mod overrides per-segment EcorMod when supplied (for calibration).
+        Returns (duration_s, power_W).
+        """
+        from scipy.optimize import brentq
 
         powerDuration = self.athlete.powerDuration
-        self.powerGuess = self.athlete.vo2maxPower
-        self.duration = 0
-        for _ in range(maxIter):
-            if self.powerGuess > self.athlete.vo2maxPower or self.powerGuess < 10:
-                print('failed')
-                return self.duration, self.powerGuess
-            self.getDuration(self.powerGuess)
-            self.limDuration = powerDuration.getDuration(self.powerGuess)
-            self.error = self.duration-self.limDuration
-            self.errorFrac = self.error/self.duration
-            if abs(self.errorFrac) <= self.errorLim:
-                return self.duration, self.powerGuess
-            self.powerGuess = self.powerGuess*(1-0.01*self.errorFrac)
-        print('getRaceTime did not converge')
+
+        def residual(p):
+            return self.getDurationFast(p, ecor_mod=ecor_mod) - powerDuration.getDuration(p)
+
+        p_lo, p_hi = 10.0, float(self.athlete.vo2maxPower)
+        try:
+            self.powerGuess = brentq(residual, p_lo, p_hi, xtol=0.01, maxiter=200)
+        except ValueError:
+            print('getRaceTime: brentq failed to bracket root — falling back')
+            self.powerGuess = self.athlete.vo2maxPower
+
+        # populate full segmentPerformance state at the solution
+        self.getDuration(self.powerGuess)
         return self.duration, self.powerGuess
             
+    def getDurationFastDecay(self, p0, k, ecor_mod=None, power_modifiers=None):
+        """Vectorized race duration under exponentially-decaying power with distance.
+
+        P(d) = p0 * exp(-k * d_km) * power_modifiers[d], where d_km is cumulative
+        distance in km. k is the fatigue decay constant (per km); k=0 with no modifiers
+        reduces to getDurationFast.
+
+        power_modifiers: optional per-segment numpy array of multiplicative scale factors
+            (e.g. temperature-based adjustments). None means all 1.0.
+        Returns total duration in seconds; does NOT populate segmentPerformances state.
+        """
+        self._ensure_arrays()
+        mods = self._seg_ecor_mods if ecor_mod is None else np.full(len(self._seg_ecor_mods), ecor_mod)
+        effective_ecor = self.athlete.Ecor * (1.0 + mods)
+        cum_dist_km = np.concatenate([[0.0], np.cumsum(self._seg_lengths[:-1])]) / 1000.0
+        powers = p0 * np.exp(-k * cum_dist_km)
+        if power_modifiers is not None:
+            powers = powers * np.asarray(power_modifiers)
+        vs = getV(self.environment.airDensity, self.athlete.Cd, self.athlete.frontalArea,
+                  self.environment.wind, effective_ecor, self._seg_slopes,
+                  self.athlete.mass, self.environment.gravity, powers)
+        self.duration = float(np.sum(self._seg_lengths / vs))
+        return self.duration
+
+    def getUltraRaceTime(self, k, ecor_mod=None, power_modifiers=None):
+        """Solve for starting power under an exponential fatigue-decay pacing model.
+
+        P(d) = P0 * exp(-k * d_km) * power_modifiers[d]. P0 is chosen so that the
+        starting power matches the power-duration curve for the total race duration —
+        the same constraint as getRaceTime. When k=0 and power_modifiers=None this is
+        identical to getRaceTime.
+
+        Physiological basis: constant-RPE pacing under progressive neuromuscular fatigue
+        (Millet et al. 2011, Tucker & Noakes 2009). The athlete always works at the same
+        perceived effort relative to their current diminished capacity, producing a net
+        positive split in absolute power even though relative effort is constant.
+
+        Args:
+            k: Fatigue decay constant per km. Typical values: 0–0.002 road marathon,
+               0.005–0.02 trail ultra. k=0 recovers the constant-power model.
+            ecor_mod: Overrides per-segment EcorMod (for calibration).
+            power_modifiers: Optional per-segment scale factors (e.g. temperature).
+        Returns (duration_s, p0_W).
+        """
+        from scipy.optimize import brentq
+
+        powerDuration = self.athlete.powerDuration
+
+        def residual(p0):
+            dur = self.getDurationFastDecay(p0, k, ecor_mod=ecor_mod,
+                                            power_modifiers=power_modifiers)
+            return p0 - powerDuration.getPower(dur)
+
+        p_lo, p_hi = 10.0, float(self.athlete.vo2maxPower)
+        try:
+            p0 = brentq(residual, p_lo, p_hi, xtol=0.01, maxiter=200)
+        except ValueError:
+            print('getUltraRaceTime: brentq failed to bracket root — falling back')
+            p0 = self.athlete.vo2maxPower
+
+        self.powerGuess = p0
+        self._populate_decay_state(p0, k, ecor_mod, power_modifiers)
+        return self.duration, p0
+
+    def _populate_decay_state(self, p0, k, ecor_mod=None, power_modifiers=None):
+        """Populate segmentPerformances state using a decaying (and optionally modulated) power profile."""
+        self._ensure_arrays()
+        mods = self._seg_ecor_mods if ecor_mod is None else np.full(len(self._seg_ecor_mods), ecor_mod)
+
+        self.duration = 0.0
+        self.durations = []
+        self.distances = []
+        self.speeds = []
+        self.segDistances = []
+        self.segDurations = []
+        self.powers = []
+        self.distance = 0.0
+        self.energy = 0.0
+        self.averagePower = 0.0
+
+        for i, sp in enumerate(self.segmentPerformances):
+            power = p0 * math.exp(-k * self.distance / 1000.0)
+            if power_modifiers is not None:
+                power *= float(power_modifiers[i])
+            effective_ecor = self.athlete.Ecor * (1.0 + float(mods[i]))
+            sp.v = getV(self.environment.airDensity, self.athlete.Cd, self.athlete.frontalArea,
+                        self.environment.wind, effective_ecor, sp.segment.slope,
+                        self.athlete.mass, self.environment.gravity, power)
+            sp.duration = sp.segment.length / sp.v
+            sp.power = power
+            sp.dragPower = sp.getDragPower(self.environment, self.athlete, sp.v)
+            sp.slopePower = sp.getSlopePower(self.environment, self.athlete, sp.segment, sp.v)
+            sp.flatPower = sp.getFlatPower(self.environment, self.athlete, sp.v, float(mods[i]))
+            sp.setStart(self.duration)
+
+            self.segDistances.append(sp.distance)
+            self.duration += sp.duration
+            self.distance += sp.segment.length
+            self.durations.append(self.duration)
+            self.distances.append(self.distance)
+            self.speeds.append(sp.v)
+            self.segDurations.append(sp.duration)
+            self.powers.append(power)
+
+        self.energy = float(np.dot(self.powers, self.segDurations))
+        self.averagePower = self.energy / self.duration
+
     def getEvenSplitRaceTime(self, considerNormalizedPower=True, maxIter=10000):
         """Solve for the constant velocity that exactly exhausts the athlete's capacity.
 
@@ -677,7 +812,7 @@ def getV(airDensity, Cd, frontalArea, wind, Ecor, slope, mass, gravity, power):
     p = power
     g = gravity
     q = frontalArea*Cd
-    v=(0.26457*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))/(d*q)-(0.41997*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s))/(d*q*(36*c*d**2*m*q**2*w+math.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))-0.66667*w
+    v=(0.26457*(36*c*d**2*m*q**2*w+np.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))/(d*q)-(0.41997*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s))/(d*q*(36*c*d**2*m*q**2*w+np.sqrt(4*(6*c*d*m*q-d**2*q**2*w**2+6*d*g*n*m*q*s)**3+(36*c*d**2*m*q**2*w+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**2)+2*d**3*q**3*w**3+36*d**2*g*n*m*q**2*s*w+54*d**2*p*q**2)**(1/3))-0.66667*w
     
     return v
 
@@ -776,90 +911,6 @@ def haversine(lat1, lon1, lat2, lon2):
     return c * 6371000
 
 
-def _is_in_us(points):
-    """Return True if all points fall within the US territory bounding box."""
-    for p in points:
-        if not (18.0 <= p.latitude <= 72.0 and -180.0 <= p.longitude <= -66.0):
-            return False
-    return True
-
-
-def _fill_elevation_opentopodata(points, dataset='ned10m'):
-    """Fill None elevations using the Open Topo Data public API (NED, ~10m resolution).
-
-    Sends up to 100 points per request with 1-second delays to respect the rate limit.
-    Only points with elevation=None are sent; existing values are preserved.
-    """
-    import requests
-    import time
-
-    missing = [(i, p) for i, p in enumerate(points) if p.elevation is None]
-    if not missing:
-        return
-
-    batch_size = 100
-    n_batches = (len(missing) + batch_size - 1) // batch_size
-    if n_batches > 1:
-        print(f'  Fetching elevation from Open Topo Data ({len(missing)} points, '
-              f'~{n_batches}s)...')
-
-    for b in range(n_batches):
-        batch = missing[b * batch_size:(b + 1) * batch_size]
-        locations = '|'.join(f'{p.latitude},{p.longitude}' for _, p in batch)
-        resp = requests.get(
-            f'https://api.opentopodata.org/v1/{dataset}',
-            params={'locations': locations},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        for (_, p), result in zip(batch, resp.json()['results']):
-            p.elevation = result['elevation']  # None if outside dataset coverage
-        if b < n_batches - 1:
-            time.sleep(1.0)
-
-
-def _fill_elevation_srtm(points):
-    """Fill None elevations using cached SRTM tiles via srtm.py (~30m resolution).
-
-    Tiles are downloaded on first use and cached in ~/.cache/srtm.
-    """
-    import srtm
-    data = srtm.get_data()
-    for p in points:
-        if p.elevation is None:
-            p.elevation = data.get_elevation(p.latitude, p.longitude)
-
-
-def fill_elevation(points, source='auto'):
-    """Fill missing elevation data on a list of gpxpy trackpoints in place.
-
-    Args:
-        points: List of gpxpy trackpoint objects (with .latitude, .longitude, .elevation).
-        source: 'auto'          — Open Topo Data for US courses (falls back to SRTM),
-                                  SRTM directly for non-US courses.
-                'opentopodata'  — always use Open Topo Data (requires internet).
-                'srtm'          — always use srtm.py (downloads tiles on first use).
-    """
-    if not any(p.elevation is None for p in points):
-        return
-
-    if source == 'opentopodata':
-        _fill_elevation_opentopodata(points)
-    elif source == 'srtm':
-        _fill_elevation_srtm(points)
-    else:  # auto
-        if _is_in_us(points):
-            try:
-                _fill_elevation_opentopodata(points)
-                if any(p.elevation is None for p in points):
-                    # Some points outside NED coverage (e.g. Hawaii, territories)
-                    _fill_elevation_srtm(points)
-                return
-            except Exception as e:
-                print(f'  Open Topo Data failed ({e}), falling back to SRTM...')
-        _fill_elevation_srtm(points)
-
-
 def gpx_to_course_csv(gpx_file_path, ecor_mod=0.0, surface_tech_mod=0.0, output_csv_path=None):
     import gpxpy
 
@@ -869,9 +920,6 @@ def gpx_to_course_csv(gpx_file_path, ecor_mod=0.0, surface_tech_mod=0.0, output_
     track = gpx.tracks[0]
     segment = track.segments[0]
     points = segment.points
-
-    if any(p.elevation is None for p in points):
-        fill_elevation(points)
 
     segments_data = []
     for i in range(len(points) - 1):
@@ -912,13 +960,132 @@ def getTime(seconds):
     return h, m, s
 
 
+def save_athlete(params, path):
+    """Serialize athlete parameters to a JSON file.
+
+    Args:
+        params: Athlete instance or dict with keys Ecor, Cd, frontalArea,
+                vo2maxPower, fatigueResistanceCoef.
+        path: Output file path.
+    """
+    if isinstance(params, Athlete):
+        data = {
+            'Ecor': params.Ecor,
+            'Cd': params.Cd,
+            'frontalArea': params.frontalArea,
+            'vo2maxPower': params.vo2maxPower,
+        }
+    else:
+        data = dict(params)
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def load_athlete(path, mass=70, glucoseConsumption=60, startingGlycogen=1500, temp=5, altitude=0):
+    """Load athlete parameters from a JSON file produced by save_athlete.
+
+    Per-race values (mass, glucoseConsumption, startingGlycogen, temp, altitude) must be
+    supplied here since they are not stored in the file.
+    """
+    with open(path) as f:
+        p = json.load(f)
+    return Athlete(
+        mass=mass,
+        Ecor=p.get('Ecor', 0.98),
+        Cd=p.get('Cd', 0.5),
+        frontalArea=p.get('frontalArea', 0.5),
+        vo2maxPower=p.get('vo2maxPower', 347),
+        glucoseConsumption=glucoseConsumption,
+        startingGlycogen=startingGlycogen,
+        temp=temp,
+        altitude=altitude,
+    )
+
+
+def _is_in_us(points):
+    """Return True if the centroid of the point cloud falls within the contiguous US + AK/HI bounding box."""
+    lats = [p.latitude for p in points if p.latitude is not None]
+    lons = [p.longitude for p in points if p.longitude is not None]
+    if not lats:
+        return False
+    lat = sum(lats) / len(lats)
+    lon = sum(lons) / len(lons)
+    return 18.0 <= lat <= 72.0 and -180.0 <= lon <= -66.0
+
+
+def _fill_elevation_opentopodata(points):
+    """Query the Open Topo Data API (NED 10m, US only) to fill missing elevations.
+
+    Rate-limited to 1 request/s; batches up to 100 points per call. Only queries
+    points where elevation is None.
+    """
+    import time
+    import urllib.request
+
+    missing_idx = [i for i, p in enumerate(points) if p.elevation is None]
+    batch_size = 100
+    for start in range(0, len(missing_idx), batch_size):
+        batch = missing_idx[start:start + batch_size]
+        coords = '|'.join(f'{points[i].latitude},{points[i].longitude}' for i in batch)
+        url = f'https://api.opentopodata.org/v1/ned10m?locations={coords}'
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read())
+        for idx, result in zip(batch, data['results']):
+            points[idx].elevation = result['elevation']
+        if start + batch_size < len(missing_idx):
+            time.sleep(1.0)
+
+
+def _fill_elevation_srtm(points):
+    """Fill missing elevations using the srtm.py library (~30 m global SRTM data)."""
+    import srtm
+    elevation_data = srtm.get_data()
+    for p in points:
+        if p.elevation is None:
+            p.elevation = elevation_data.get_elevation(p.latitude, p.longitude)
+
+
+def fill_elevation(points, source='auto'):
+    """Fill any missing elevation values on a list of GPX points.
+
+    Args:
+        points: List of gpxpy point objects with .latitude, .longitude, .elevation.
+        source: 'auto' (default) — NED 10m for US points, SRTM otherwise;
+                'opentopodata' — force Open Topo Data (US NED 10m, 1 req/s);
+                'srtm' — force local SRTM tiles via srtm.py.
+    """
+    if not any(p.elevation is None for p in points):
+        return
+    if source == 'opentopodata':
+        _fill_elevation_opentopodata(points)
+    elif source == 'srtm':
+        _fill_elevation_srtm(points)
+    else:
+        if _is_in_us(points):
+            try:
+                print('  Fetching elevation from Open Topo Data (NED 10m)...')
+                _fill_elevation_opentopodata(points)
+                if not any(p.elevation is None for p in points):
+                    return
+            except Exception as e:
+                print(f'  Open Topo Data failed ({e}), falling back to SRTM...')
+        print('  Fetching elevation from SRTM...')
+        _fill_elevation_srtm(points)
+
+
 def gpx_to_course(gpx_file_path, name=None, ecor_mod=0.0, surface_tech_mod=0.0):
     """Build a Course directly from a GPX file without writing an intermediate CSV.
 
+    Elevation is filled automatically from Open Topo Data (US) or SRTM when the GPX
+    lacks elevation data.
+
     Args:
-        name: Course name; defaults to the GPX filename.
-        ecor_mod: Fractional surface penalty applied to all segments (0 = firm road).
-        surface_tech_mod: Reserved terrain modifier applied to all segments.
+        gpx_file_path: Path to the .gpx file.
+        name: Course name; defaults to the filename stem.
+        ecor_mod: Fractional surface penalty applied to every segment (0 = firm road).
+        surface_tech_mod: Technical terrain modifier (reserved, currently unused).
+    Returns:
+        Course instance.
     """
     import gpxpy
 
@@ -936,50 +1103,10 @@ def gpx_to_course(gpx_file_path, name=None, ecor_mod=0.0, surface_tech_mod=0.0):
         distance = haversine(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
         if distance == 0:
             continue
-        elev_diff = (p2.elevation - p1.elevation) if (p2.elevation is not None and p1.elevation is not None) else 0
+        elev_diff = (p2.elevation - p1.elevation) if (
+            p2.elevation is not None and p1.elevation is not None
+        ) else 0.0
         segments.append(Segment(i, distance, elev_diff, ecor_mod, surface_tech_mod))
 
-    course_name = name or os.path.basename(gpx_file_path)
+    course_name = name or os.path.splitext(os.path.basename(gpx_file_path))[0]
     return Course(segments, course_name)
-
-
-def save_athlete(params, path):
-    """Save athlete parameters to a JSON file.
-
-    Args:
-        params: Either an Athlete instance or a dict of parameter values.
-    """
-    if isinstance(params, Athlete):
-        data = {
-            'Ecor':                  params.Ecor,
-            'Cd':                    params.Cd,
-            'frontalArea':           params.frontalArea,
-            'vo2maxPower':           params.vo2maxPower,
-            'fatigueResistanceCoef': params.fatigueResistanceCoef,
-        }
-    else:
-        data = dict(params)
-    with open(path, 'w') as f:
-        json.dump(data, f, indent=2)
-
-
-def load_athlete(path, mass=70, glucoseConsumption=60, startingGlycogen=1500, temp=5, altitude=0):
-    """Load athlete parameters from a JSON file and return an Athlete.
-
-    Race-specific inputs (mass, glucoseConsumption, startingGlycogen, temp, altitude)
-    are not stored in the file and must be supplied here.
-    """
-    with open(path) as f:
-        p = json.load(f)
-    return Athlete(
-        mass=mass,
-        Ecor=p.get('Ecor', 0.98),
-        Cd=p.get('Cd', 0.5),
-        frontalArea=p.get('frontalArea', 0.5),
-        vo2maxPower=p.get('vo2maxPower', 347),
-        fatigueResistanceCoef=p.get('fatigueResistanceCoef', 0.07),
-        glucoseConsumption=glucoseConsumption,
-        startingGlycogen=startingGlycogen,
-        temp=temp,
-        altitude=altitude,
-    )

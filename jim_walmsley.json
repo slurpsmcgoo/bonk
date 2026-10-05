@@ -1,0 +1,20 @@
+{
+  "_notes": [
+    "Jim Walmsley — elite ultramarathon athlete",
+    "Mass: ~70 kg (6'1\", ~155 lbs)",
+    "VO2max: ~78 mL/kg/min (per published estimates; Walmsley has not released exact figures)",
+    "  vo2maxPower derived: VO2max_ml_kg_min * mass / 1000 * 20.1 J/mL * 1000/60 * efficiency(0.25)",
+    "  = 78 * 70 / 1000 * 20100 / 60 * 0.25 = 457 W (mechanical, at 5°C sea level)",
+    "Ecor: 0.90 J/kg/m — elite running economy (significantly better than sub-elite ~0.97)",
+    "  Reference: Lazzer et al. 2012, elite ultrarunners 0.85-0.95 J/kg/m",
+    "Race record context:",
+    "  Western States 100: 14:09:28 (2019 CR, 18,000 ft gain)",
+    "  UTMB 100: 19:22 (2024, 32,000 ft gain)",
+    "  Road marathon: ~2:26 (Boston 2023, hilly)"
+  ],
+  "Ecor": 0.90,
+  "vo2maxPower": 457,
+  "Cd": 0.5,
+  "frontalArea": 0.5,
+  "mass": 70
+}

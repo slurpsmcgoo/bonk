@@ -1,0 +1,15 @@
+{
+  "_notes": [
+    "Gaillard — competitive age-group runner",
+    "Mass: 160 lbs = 72.6 kg",
+    "Marathon PR: 2:35 at Boston (~2:32 flat equivalent)",
+    "vo2maxPower=420W derived by solving flat marathon time = 2:32 at 18°C",
+    "Ecor=0.94 J/kg/m — good running economy (between sub-elite 0.97 and elite 0.90)",
+    "Implied VO2max ~66 mL/kg/min at race temperature"
+  ],
+  "Ecor": 0.94,
+  "vo2maxPower": 420,
+  "Cd": 0.5,
+  "frontalArea": 0.5,
+  "mass": 72.6
+}
